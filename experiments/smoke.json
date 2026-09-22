@@ -1,0 +1,11 @@
+{
+  "name": "M1 synthetic contract smoke",
+  "image": "oven/bun:1.4.2",
+  "cases": ["clamp", "unique", "chunk", "mean", "slug"],
+  "variants": [
+    { "id": "scripted-repair", "provider": "scripted-repair" },
+    { "id": "scripted-noop", "provider": "scripted-noop" }
+  ],
+  "repeats": 1,
+  "seed": 42
+}

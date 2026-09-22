@@ -1,0 +1,9 @@
+node_modules/
+.tools/
+.detroit/
+dist/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.tmp
