@@ -8,7 +8,8 @@ import {
   importPayloadSchema,
   importRequestSchema,
 } from "./import-contract";
-import { importCss, importHtml, importJs } from "./import-ui";
+import { importCss, importHtml } from "./import-layout";
+import { importJs } from "./import-ui";
 import { acquireLock, Store } from "./store";
 
 const requestLimit = importLimits.payloadBytes;
