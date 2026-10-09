@@ -1,8 +1,11 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import type { Evaluation, ExperimentSpec, RunResult } from "./contracts";
 import { digest } from "./evidence";
+
+const sqliteVersionSchema = z.object({ user_version: z.number().int().nonnegative() });
 
 export type TrialRow = {
   id: string;
@@ -40,8 +43,11 @@ export class Store {
       CREATE TABLE IF NOT EXISTS trials (id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL REFERENCES experiments(id), case_id TEXT NOT NULL, variant_id TEXT NOT NULL, repeat_index INTEGER NOT NULL, ordinal INTEGER NOT NULL, UNIQUE(experiment_id,case_id,variant_id,repeat_index));
       CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, trial_id TEXT NOT NULL REFERENCES trials(id), status TEXT NOT NULL, directory TEXT NOT NULL, result_json TEXT, error TEXT, cleanup TEXT NOT NULL DEFAULT 'pending');
       CREATE TABLE IF NOT EXISTS evaluations (id INTEGER PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(id), evidence_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL);
-      PRAGMA user_version=1;
     `);
+    if (this.schemaVersion === 0) this.db.exec("PRAGMA user_version=1");
+  }
+  get schemaVersion(): number {
+    return sqliteVersionSchema.parse(this.db.query("PRAGMA user_version").get()).user_version;
   }
   close() {
     this.db.close();

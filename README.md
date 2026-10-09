@@ -2,7 +2,9 @@
 
 用于改进 Coding Agent Harness、比较 agent 配置的本地实验平台。面向 Harness 开发与 LLM 测评：自己实现执行循环，用独立验证器判分，再从证据和报告定位问题。
 
-**当前：M1 使用 Bubblewrap，无需 Docker。** 已有参考 Harness、5 个开发任务、独立沙箱执行与评分、SQLite/JSONL、重评分和静态报告。本机已完成真实 Bubblewrap 隔离、取消回收与完整 10-Trial smoke；真实模型实验尚待执行。最新范围与待审阅方案见 [CONTEXT.md](CONTEXT.md) 和 [docs/MVP-DESIGN.md](docs/MVP-DESIGN.md)，实际实现边界见 [docs/M1.md](docs/M1.md)；[DESIGN.md](DESIGN.md) 保留历史设计。本轮只修复既有行为，未新增 Web、现场保存、通用题库、人工评分或统计模块。
+**当前：M1 使用 Bubblewrap，无需 Docker。** 已有参考 Harness、5 个开发任务、独立沙箱执行与评分、SQLite/JSONL、重评分和静态报告；新增了通用 case 导入、本地 Web 草稿整理与集合管理。真实模型实验尚待执行。最新范围与待审阅方案见 [CONTEXT.md](CONTEXT.md) 和 [docs/MVP-DESIGN.md](docs/MVP-DESIGN.md)，实际实现边界见 [docs/M1.md](docs/M1.md)；[DESIGN.md](DESIGN.md) 保留历史设计。
+
+**收录不等于可执行。** 导入的真实题目尚未接入通用执行器与评分器，不会被塞进现有 5 个函数 fixture 的运行协议。OMP 原生现场保存、人工评分和统计模块仍未实现。
 
 ## 先看结果
 
@@ -39,6 +41,96 @@ npm install --prefix .tools --no-audit --no-fund bun@1.4.2
 ```
 
 `doctor` 显示 Bubblewrap 启动探测、Bun/系统指纹、资源限制、driver 构建与凭据存在性。Bubblewrap 缺失或被系统策略禁用时，`run` 会拒绝执行，不回退到宿主运行。凭据值不会被打印。
+
+## 把日常真实 case 收录进集合
+
+### 最方便：本地 Web
+
+只做导入与整理时需要 Bun，不要求 Bubblewrap、driver 构建或模型凭据：
+
+```bash
+./bunw src/cli.ts serve --port 8787
+```
+
+打开 **http://127.0.0.1:8787/**。默认数据目录是 `.detroit/`，可用 `--data <目录>` 分开保存。仓库在远端时，先用 SSH 转发 `ssh -L 8787:127.0.0.1:8787 user@host`，浏览器仍访问上述地址；不要把服务暴露到公网。
+
+以 PC / APP 处理同一实体不一致的 oncall 为例：
+
+1. 填写问题、来源引用和“原始问题 / 当前状态”起点。已用来排障或优化的问题选择改善用途，不冒充独立验证题。
+2. 分别选择 PC 与 APP 目录，填写各自版本和快照状态。版本是你的声明，导入不会检出 Git 提交或恢复历史文件。
+3. 上传相同接口输入、日志与验收材料，逐项核对角色。旧模型失败记录默认放诊断侧；已知根因和私有验收答案不要写进任务说明或输入侧。
+4. 点击“预览待批准的材料”，核对确切字节、路径、哈希、角色、排除项和缺失项，再勾选批准并保存。
+5. 创建集合，或保存时选择已有集合；可设用途、回归属性、题目版本和业务权重。集合成员固定具体版本，新修订不会自动替换它。
+
+| 材料角色 | 用途 |
+| --- | --- |
+| `input` | 未来被测对象可见的任务材料，如两个仓库及相同接口输入 |
+| `diagnostic` | 历史尝试、调试记录；不默认提供给被测对象 |
+| `scoring` | 标准答案、私有验证数据或验收程序；不默认提供给被测对象 |
+
+原始快照、依赖或验收依据暂缺时仍可保存。页面明确显示草稿、缺失项和 `executor_not_connected`；准备命令、联网和凭据能力只是惰性声明，保存不会执行脚本或调用模型，凭据字段只记录能力名称，不主动采集或填入密钥值。浏览器目录上传不保证原子快照，权限默认声明为 `0644`。
+
+在草稿详情点击“以此版本材料创建新修订”可补充协议与材料；历史版本仍可查看、预览和下载。切换原始 / 当前起点须新建关联题目，不在同一题目上覆盖起点。已知同源问题选择同一来源组；相同非空来源引用不能偷偷新建另一个组绕过用途检查。验证来源转作改善须明确确认并说明理由，整个来源组记录暴露时间；历史验证集合会提示已暴露成员，不能继续作为当前独立验证证据。
+
+### 通用协议与 CLI
+
+格式为 `kind: "detroit.case"`、`schemaVersion: 1` 的 JSON 清单加材料。可以用 CLI 从本地目录收集，也可以在 Web 的“协议 JSON 导入”中上传 `{manifest, files, warnings}`，其中 `files` 明确携带 `workspaceId`、相对 `path`、`role`、`required`、`mode`、`encoding: "utf8" | "base64"` 与 `data`。Web 只接收你选择上传的字节，禁止主机 `path` / `sourcePath`。
+
+CLI 清单示例：把以下内容保存为 `case.json`，将批准的两个仓库目录放在同目录的 `pc/`、`app/`，附件放在同目录。起点未核实时保留 `unknown`，不要为了消除提示填成 `original`：
+
+```json
+{
+  "kind": "detroit.case",
+  "schemaVersion": 1,
+  "title": "PC 与 APP 同实体表现不一致",
+  "instruction": "针对相同接口比较两条处理链路，定位差异并给出验证证据。",
+  "source": {
+    "kind": "oncall",
+    "reference": "pc-app-entity-oncall",
+    "description": "本事件的稳定标识；也可填写真实工单链接",
+    "usedForImprovement": true
+  },
+  "start": { "kind": "original", "description": "从原始用户问题开始" },
+  "workspaces": [
+    { "id": "pc", "name": "PC", "path": "pc", "snapshot": "unknown" },
+    { "id": "app", "name": "APP", "path": "app", "snapshot": "unknown" }
+  ],
+  "materials": [
+    { "path": "request.json", "sourcePath": "request.json", "role": "input" },
+    { "path": "attempts.txt", "sourcePath": "attempts.txt", "role": "diagnostic", "required": false },
+    { "path": "expected.txt", "sourcePath": "expected.txt", "role": "scoring" }
+  ],
+  "environment": { "requirements": [], "preparation": [], "network": "none", "credentials": [] },
+  "output": { "format": "text", "description": "链路对比、根因及验证证据" },
+  "acceptance": { "kind": "manual", "description": "按私有依据核对根因与证据；尚未接入评分器" },
+  "missing": []
+}
+```
+
+`path` / `sourcePath` 相对清单目录，不允许越界、符号链接（包括祖先目录）或特殊文件。缺失的路径会记录为 missing，仍可批准保存草稿；空文件是有效材料，不等同于缺失。无需附件的纯文本任务可只提供完整任务说明。
+
+```bash
+# 先检查预览；把输出中的完整 approvalDigest 贴到下一条命令
+./bunw src/cli.ts case preview case.json
+./bunw src/cli.ts case import case.json --approve <approvalDigest>
+./bunw src/cli.ts case list
+./bunw src/cli.ts case show <case-id>
+```
+
+CLI 也接受 Web 的完整上传协议 JSON。元数据清单上限 1 MiB，含材料的协议 JSON / HTTP 载荷上限 100 MiB；实际材料最多 10000 个文件、单文件 16 MiB、总计 64 MiB。目录收集排除 `.git`、`node_modules`、`.detroit` 和明显秘密文件，预览披露排除项；这不保证剩余内容无敏感信息。
+
+创建集合时，把 `{"name":"oncall 回归","purpose":"improvement","regression":true}` 保存为 `collection.json`：
+
+```bash
+./bunw src/cli.ts collection create collection.json
+./bunw src/cli.ts collection list
+./bunw src/cli.ts collection add <collection-id> <case-id> --revision 1 --weight 1
+./bunw src/cli.ts collection show <collection-id>
+```
+
+补充同一题目：预览和导入均传 `--case <case-id>`，导入额外传 `--expected-revision <当前版本>`；CLI 会绑定该题原来源组。新建同源关联题：预览和导入均传 `--source-group <source-id>`。确认验证来源转作改善时，额外传 `--confirm-exposure --reason <理由>`；已暴露来源不能重新加入独立验证集合。
+
+`serve` 在存活期间持有写锁；CLI 的 `case` / `collection` 命令请在停止 Web 服务后使用，或直接在 Web 操作。材料与草稿按版本存于同一 `index.sqlite`，导入会事务迁移 v1 → v2，旧实验、尝试和评分保留。数据是本地明文，应保护数据目录权限；没有分享脱敏能力。
 
 ## 跑第一批任务
 
@@ -155,7 +247,9 @@ DETROIT_WRITE_DEMO=1 ./bunw test tests/pipeline.test.ts
 | `src/runner.ts` / `src/store.ts` | 冻结实验、Trial/Attempt、SQLite WAL、重评分和遗留对账 |
 | `src/evidence.ts` / `src/report.ts` | SHA-256 对象、JSONL、输入回查、代码变化和 HTML 转义 |
 | `src/cases.ts` | 5 个原创合成开发任务、已知正解与验证断言 |
+| `src/import-contract.ts` / `src/case-imports.ts` | 版本化导入、材料批准、不可变草稿修订、来源用途与集合成员 |
+| `src/import-server.ts` / `src/import-ui.ts` | loopback Web、会话/来源校验、文件上传预览与草稿整理 |
 
-数据包含提示、源代码和工具输出，报告是本地完整证据视图；M1 没有实现分享脱敏。所有任务均为公开 dev fixture，没有保留测试集、统计显著性结论或模型排名。
+数据包含提示、源代码、诊断和评分侧材料，报告是本地完整证据视图；尚未实现分享脱敏。当前可执行任务仍只有公开 dev fixture；导入集合只用于收录与整理，没有通用执行、统计显著性结论或模型排名。
 
 下一步跑一份真实模型开发基线。随后进入 M2：完整历史、滑动窗口、结构化压缩的受控比较，加入长链信息任务、来源回读和文件失效检查。
