@@ -23,6 +23,7 @@ export class Evidence {
   constructor(
     readonly root: string,
     readonly attemptId: string,
+    readonly sourceId: "reference" | "omp" = "reference",
   ) {
     this.objects = join(root, "objects");
     this.journal = join(root, "events.jsonl");
@@ -58,7 +59,7 @@ export class Evidence {
     const event: EvidenceEvent = {
       schema_version: 1,
       attempt_id: this.attemptId,
-      source_id: "reference",
+      source_id: this.sourceId,
       source_seq: ++this.seq,
       event_type: type,
       observed_at: new Date().toISOString(),

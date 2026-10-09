@@ -19,6 +19,7 @@ export function runProcess(
     maxBytes?: number;
     uid?: number;
     gid?: number;
+    onSpawn?: (pid: number) => void;
   } = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
@@ -48,6 +49,7 @@ export function runProcess(
       timedOut = false,
       aborted = false,
       truncated = false;
+    let spawnError: unknown;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const kill = (signal: NodeJS.Signals) => {
       if (child.pid) {
@@ -61,11 +63,11 @@ export function runProcess(
       killTimer ??= setTimeout(() => kill("SIGKILL"), 300);
     };
     const abort = () => {
-      aborted = true;
+      if (!timedOut && !truncated) aborted = true;
       stop();
     };
     const timer = setTimeout(() => {
-      timedOut = true;
+      if (!aborted && !truncated) timedOut = true;
       stop();
     }, options.timeoutMs ?? 30_000);
     options.signal?.addEventListener("abort", abort, { once: true });
@@ -81,7 +83,6 @@ export function runProcess(
     child.stdout.on("data", (chunk: Buffer) => capture(stdout, chunk));
     child.stderr.on("data", (chunk: Buffer) => capture(stderr, chunk));
     child.stdin.on("error", () => {});
-    child.stdin.end(options.input ?? "");
     const cleanup = () => {
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
@@ -90,11 +91,17 @@ export function runProcess(
       kill("SIGKILL");
     };
     child.on("error", (error) => {
-      cleanup();
-      reject(error);
+      // Wait for close before resolving cleanup, including failed spawn. The
+      // sandbox lifecycle must not record "done" while a child is still alive.
+      spawnError ??= error;
+      stop();
     });
     child.on("close", (code) => {
       cleanup();
+      if (spawnError) {
+        reject(spawnError);
+        return;
+      }
       resolve({
         code,
         stdout: Buffer.concat(stdout).toString("utf8"),
@@ -104,5 +111,14 @@ export function runProcess(
         truncated,
       });
     });
+    try {
+      if (child.pid) options.onSpawn?.(child.pid);
+      child.stdin.end(options.input ?? "");
+      // Cover cancellation between the initial check and listener registration.
+      if (options.signal?.aborted) abort();
+    } catch (error) {
+      spawnError = error;
+      stop();
+    }
   });
 }

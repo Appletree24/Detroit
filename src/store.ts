@@ -83,6 +83,13 @@ export class Store {
       .query("SELECT * FROM trials WHERE experiment_id=? ORDER BY ordinal")
       .all(id) as TrialRow[];
   }
+  experimentForTrial(id: string) {
+    const row = this.db.query("SELECT experiment_id FROM trials WHERE id=?").get(id) as {
+      experiment_id: string;
+    } | null;
+    if (!row) throw new Error(`Unknown trial: ${id}`);
+    return this.experiment(row.experiment_id);
+  }
   attempts(trialId: string) {
     return this.db
       .query("SELECT * FROM attempts WHERE trial_id=? ORDER BY rowid")

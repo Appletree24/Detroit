@@ -1,4 +1,4 @@
-import { driverRequestSchema, harnessVersion } from "../contracts";
+import { driverConfiguration, driverRequestSchema, harnessVersion } from "../contracts";
 import { Evidence } from "../evidence";
 import { OpenAIModel, ScriptedModel } from "../harness/provider";
 import { runHarness } from "../harness/runtime";
@@ -9,17 +9,13 @@ frame({ type: "ready", protocol_version: 1, harness_version: harnessVersion });
 const raw = JSON.parse(await Bun.stdin.text()) as Record<string, unknown>;
 const request = driverRequestSchema.parse(raw);
 const apiKey = typeof raw.api_key === "string" ? raw.api_key : "";
-// Container starts as root only to provision ownership. The agent and its tools
-// run as an unprivileged user, with no access to the root-owned control directory.
-if (process.getuid?.() === 0) {
-  process.setgid!(1000);
-  process.setuid!(1000);
-}
+// Bubblewrap starts the driver as uid/gid 1000 in its own user namespace.
 const evidence = new Evidence("/evidence", request.attempt_id);
 const abort = new AbortController();
 process.on("SIGTERM", () => abort.abort());
 process.on("SIGINT", () => abort.abort());
-frame({ type: "accepted", attempt_id: request.attempt_id, effective_config: request.variant });
+const configuration = driverConfiguration(request.variant);
+frame({ type: "accepted", attempt_id: request.attempt_id, configuration });
 const model =
   request.variant.provider === "openai"
     ? new OpenAIModel(request.variant, apiKey)
@@ -32,4 +28,4 @@ const result = await runHarness({
   tools: new ToolExecutor("/workspace", evidence),
   signal: abort.signal,
 });
-frame({ type: "done", result });
+frame({ type: "done", result, configuration });

@@ -4,22 +4,38 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { getCase, repairScript } from "./cases";
 import { type Case, type DriverRequest, type ExperimentSpec, harnessVersion } from "./contracts";
+import { evaluationError } from "./eval/verifier";
 import { digest, Evidence } from "./evidence";
 import { systemPrompt } from "./harness/runtime";
-import { artifactDigest, ContainerCleanupError, Docker } from "./sandbox/docker";
+import { Bubblewrap, type SandboxEnvironment } from "./sandbox/bubblewrap";
+import { artifactDigest } from "./sandbox/files";
+import { SandboxCleanupError } from "./sandbox/lifecycle";
 import type { Store, TrialRow } from "./store";
 
 export type FrozenExperiment = {
   spec: ExperimentSpec;
   cases: Case[];
-  image: string;
-  harnessVersion: string;
+  environment: SandboxEnvironment;
+  harnessVersion: string | null;
   bunVersion: string;
-  systemPrompt: string;
-  driverDigest: string;
+  systemPrompt: string | null;
+  driverDigests: Record<string, string>;
   verifierDigest: string;
-  policy: { retry: "none"; order: "seeded-case-blocks"; concurrency: 1; context: "full-history/1" };
+  policy: {
+    retry: "none";
+    order: "seeded-case-blocks";
+    concurrency: 1;
+    context: "full-history/1" | null;
+  };
 };
+async function verifierVersion(bundle: string) {
+  return digest(
+    JSON.stringify({
+      worker: digest(await readFile(bundle)),
+      supervisor: digest(await readFile(join(import.meta.dir, "eval/verifier.ts"))),
+    }),
+  );
+}
 export function schedule(experimentId: string, spec: ExperimentSpec): TrialRow[] {
   let state = spec.seed >>> 0;
   const random = () => {
@@ -53,41 +69,51 @@ export async function runExperiment(
   store: Store,
   project: string,
   signal: AbortSignal,
-  docker = new Docker(),
+  sandbox = new Bubblewrap(),
 ): Promise<string> {
-  await docker.doctor();
+  const environment = await sandbox.doctor();
   const active = store.active();
   if (active.length)
     throw new Error(
       "Unreconciled attempts exist. Run detroit recover before creating another experiment.",
     );
-  const image = await docker.resolveImage(spec.image);
-  const driver = join(project, "dist/reference.js"),
-    verifier = join(project, "dist/verifier.js");
+  const driverPaths = {
+    reference: join(project, "dist/reference.js"),
+    omp: join(project, "dist/omp.js"),
+  };
+  const verifier = join(project, "dist/verifier.js");
   const items = spec.cases.map(getCase);
   const apiKey = process.env.OPENAI_API_KEY;
   if (spec.variants.some((v) => v.provider === "openai") && !apiKey)
     throw new Error("OPENAI_API_KEY is required");
+  const driverDigests: Record<string, string> = {};
+  for (const name of [...new Set(spec.variants.map((v) => v.driver))])
+    driverDigests[name] = digest(await readFile(driverPaths[name]));
+  const referenceOnly = spec.variants.every((variant) => variant.driver === "reference");
+  if (!referenceOnly)
+    console.warn(
+      "OMP applies the model selector and wall deadline only; other requested controls are unsupported/unknown. Reference prompt and context policy are not OMP configuration.",
+    );
   const frozen: FrozenExperiment = {
     spec,
     cases: items,
-    image,
-    harnessVersion,
+    environment,
+    harnessVersion: referenceOnly ? harnessVersion : null,
     bunVersion: Bun.version,
-    systemPrompt,
-    driverDigest: digest(await readFile(driver)),
-    verifierDigest: digest(await readFile(verifier)),
+    systemPrompt: referenceOnly ? systemPrompt : null,
+    driverDigests,
+    verifierDigest: await verifierVersion(verifier),
     policy: {
       retry: "none",
       order: "seeded-case-blocks",
       concurrency: 1,
-      context: "full-history/1",
+      context: referenceOnly ? "full-history/1" : null,
     },
   };
   const id = randomUUID();
   const trials = schedule(id, spec);
   store.freeze(id, spec, frozen, trials);
-  console.log(`Experiment ${id} · ${trials.length} trials · image ${image}`);
+  console.log(`Experiment ${id} · ${trials.length} trials · ${environment.bubblewrap}`);
   const cancelPath = join(store.root, `${id}.cancel`);
   const requested = new AbortController();
   const cancelTimer = setInterval(() => {
@@ -110,41 +136,55 @@ export async function runExperiment(
       };
       store.start(attemptId, trial.id, directory);
       let cleanup = false;
-      let outcome: Awaited<ReturnType<Docker["run"]>> | undefined;
+      let outcome: Awaited<ReturnType<Bubblewrap["run"]>> | undefined;
       try {
-        outcome = await docker.run({
+        outcome = await sandbox.run({
           item,
           request,
-          image,
+          network: spec.sandbox.network,
           directory,
-          bundle: driver,
+          bundle: driverPaths[variant.driver],
           signal: combined,
-          apiKey: variant.provider === "openai" ? apiKey : undefined,
+          apiKey:
+            variant.provider === "openai"
+              ? apiKey
+              : variant.driver === "omp"
+                ? (process.env.DETROIT_OMP_API_KEY ?? undefined)
+                : undefined,
         });
         cleanup = outcome.cleanup;
         const evidence = new Evidence(join(directory, "evidence"), attemptId);
         evidence.emit("experiment.config", {
           requested: variant,
-          image,
-          driverDigest: frozen.driverDigest,
-          synthetic: variant.provider !== "openai",
+          configuration: outcome.configuration ?? null,
+          environment,
+          driver: variant.driver,
+          network: spec.sandbox.network,
+          driverDigest: frozen.driverDigests[variant.driver],
+          // Scripted variants are synthetic; OMP/external driving a real model is not.
+          synthetic: variant.provider !== "openai" && variant.provider !== "external",
         });
         if (outcome.files) {
           const manifest = {
             files_ref: evidence.put(outcome.files),
             digest: artifactDigest(outcome.files),
+            complete: outcome.collection?.workspace.complete ?? true,
+            truncated: outcome.collection?.workspace.truncated ?? false,
+            missing: outcome.collection?.workspace.missing ?? [],
           };
           await writeFile(join(directory, "artifacts.json"), JSON.stringify(manifest));
           evidence.emit("artifacts.manifest", manifest);
           if (cleanup && !combined.aborted) {
-            const evaluation = await docker.verify({
-              item,
-              files: outcome.files,
-              image,
-              directory,
-              bundle: verifier,
-              id: attemptId,
-            });
+            const evaluation = manifest.complete
+              ? await sandbox.verify({
+                  item,
+                  files: outcome.files,
+                  directory,
+                  bundle: verifier,
+                  id: attemptId,
+                  signal: combined,
+                })
+              : evaluationError(`Artifact collection incomplete: ${manifest.missing.join("; ")}`);
             evidence.emit("evaluation.completed", {
               evaluation,
               verifierDigest: frozen.verifierDigest,
@@ -152,7 +192,13 @@ export async function runExperiment(
             store.score(
               attemptId,
               manifest.digest,
-              digest(JSON.stringify({ item, verifier: frozen.verifierDigest, image })),
+              digest(
+                JSON.stringify({
+                  item,
+                  verifier: frozen.verifierDigest,
+                  environment,
+                }),
+              ),
               evaluation,
             );
           }
@@ -168,10 +214,10 @@ export async function runExperiment(
           `${trial.ordinal + 1}/${trials.length} ${item.id} / ${variant.id}: ${outcome.status}, ${store.evaluations(attemptId).at(-1)?.result_json ?? "unscored"}`,
         );
       } catch (error) {
-        if (error instanceof ContainerCleanupError) cleanup = false;
+        if (error instanceof SandboxCleanupError) cleanup = false;
         store.finish(
           attemptId,
-          combined.aborted ? "cancelled" : (outcome?.status ?? "error"),
+          outcome?.status ?? (combined.aborted ? "cancelled" : "error"),
           outcome?.result ?? null,
           String(error),
           cleanup ? "done" : "pending",
@@ -187,11 +233,18 @@ export async function runExperiment(
   return id;
 }
 
-export async function recover(store: Store, docker = new Docker()) {
-  await docker.doctor();
+export async function recover(store: Store, sandbox = new Bubblewrap()) {
+  await sandbox.doctor();
   for (const attempt of store.active()) {
-    const agentClean = await docker.remove(`detroit-a-${attempt.id}`);
-    const verifierClean = await docker.remove(`detroit-v-${attempt.id}`);
+    const frozen = JSON.parse(
+      store.experimentForTrial(attempt.trial_id).spec_json,
+    ) as FrozenExperiment;
+    if (frozen.environment?.kind !== "bubblewrap")
+      throw new Error(
+        "Legacy Docker attempt: use the previous Docker runner to clean its data directory.",
+      );
+    const agentClean = await sandbox.remove(attempt.directory, "agent");
+    const verifierClean = await sandbox.remove(attempt.directory, "verifier");
     if (!agentClean || !verifierClean) throw new Error(`Cannot confirm cleanup: ${attempt.id}`);
     if (attempt.status === "running")
       store.finish(
@@ -205,11 +258,18 @@ export async function recover(store: Store, docker = new Docker()) {
   }
 }
 
-export async function rescore(id: string, store: Store, project: string, docker = new Docker()) {
-  await docker.doctor();
+export async function rescore(
+  id: string,
+  store: Store,
+  project: string,
+  sandbox = new Bubblewrap(),
+) {
+  const environment = await sandbox.doctor();
   const frozen = JSON.parse(store.experiment(id).spec_json) as FrozenExperiment;
+  if (frozen.environment?.kind !== "bubblewrap")
+    throw new Error("Legacy Docker experiment cannot be rescored as a Bubblewrap experiment.");
   const bundle = join(project, "dist/verifier.js");
-  const verifierDigest = digest(await readFile(bundle));
+  const verifierDigest = await verifierVersion(bundle);
   for (const trial of store.trials(id)) {
     const attempt = store.attempts(trial.id).at(-1);
     if (!attempt || attempt.status === "running" || attempt.cleanup !== "done") continue;
@@ -219,14 +279,16 @@ export async function rescore(id: string, store: Store, project: string, docker 
     const manifest = JSON.parse(await readFile(path, "utf8")) as {
       files_ref: string;
       digest: string;
+      complete?: boolean;
     };
+    // Old manifests came from the strict collector. Explicitly incomplete new
+    // manifests cannot turn a collection failure into a candidate failure.
+    if (manifest.complete === false) continue;
     const files = JSON.parse(evidence.read(manifest.files_ref)) as Record<string, string>;
     if (artifactDigest(files) !== manifest.digest)
       throw new Error("Artifact manifest digest mismatch");
     const item = frozen.cases.find((c) => c.id === trial.case_id)!;
-    const specDigest = digest(
-      JSON.stringify({ item, verifier: verifierDigest, image: frozen.image }),
-    );
+    const specDigest = digest(JSON.stringify({ item, verifier: verifierDigest, environment }));
     const existing = store
       .evaluations(attempt.id)
       .find(
@@ -237,16 +299,20 @@ export async function rescore(id: string, store: Store, project: string, docker 
       );
     if (existing) continue;
     store.markPending(attempt.id);
-    const evaluation = await docker.verify({
+    const evaluation = await sandbox.verify({
       item,
       files,
-      image: frozen.image,
       directory: attempt.directory,
       bundle,
       id: attempt.id,
     });
     store.markClean(attempt.id);
-    evidence.emit("evaluation.rescored", { evaluation, verifierDigest, specDigest });
+    evidence.emit("evaluation.rescored", {
+      evaluation,
+      verifierDigest,
+      specDigest,
+      environment,
+    });
     store.score(attempt.id, manifest.digest, specDigest, evaluation);
   }
 }

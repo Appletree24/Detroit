@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cases } from "../src/cases";
 import { evaluate } from "../src/eval/verifier";
-import { writeFiles } from "../src/sandbox/docker";
+import { writeFiles } from "../src/sandbox/files";
 
 const dirs: string[] = [];
 afterEach(async () => {

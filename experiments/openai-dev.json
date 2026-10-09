@@ -1,6 +1,6 @@
 {
   "name": "OpenAI development baseline",
-  "image": "oven/bun:1.4.2",
+  "sandbox": { "kind": "bubblewrap", "network": "host" },
   "cases": ["clamp", "unique", "chunk", "mean", "slug"],
   "variants": [{
     "id": "reference-openai",

@@ -1,6 +1,6 @@
 {
   "name": "M1 synthetic contract smoke",
-  "image": "oven/bun:1.4.2",
+  "sandbox": { "kind": "bubblewrap", "network": "none" },
   "cases": ["clamp", "unique", "chunk", "mean", "slug"],
   "variants": [
     { "id": "scripted-repair", "provider": "scripted-repair" },

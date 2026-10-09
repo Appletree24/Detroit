@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { experimentSchema } from "./contracts";
 import { writeReport } from "./report";
 import { recover, rescore, runExperiment } from "./runner";
-import { Docker } from "./sandbox/docker";
+import { Bubblewrap, type SandboxEnvironment } from "./sandbox/bubblewrap";
 import { acquireLock, Store } from "./store";
 
 const project = resolve(import.meta.dir, "..");
@@ -27,7 +27,8 @@ const help = `Detroit M1
   bun run detroit score <experiment-id>
   bun run detroit report <experiment-id> --out report.html
 Options: --data <directory>
-run always uses Docker. Ctrl-C requests cancellation and container cleanup.
+run always uses Bubblewrap on Linux. Docker is not required.
+Ctrl-C requests cancellation and sandbox cleanup.
 `;
 
 async function main() {
@@ -35,38 +36,51 @@ async function main() {
     console.log(help);
     return;
   }
-  const docker = new Docker();
+  const sandbox = new Bubblewrap();
   if (command === "doctor") {
     const driverReady =
       existsSync(join(project, "dist/reference.js")) &&
       existsSync(join(project, "dist/verifier.js"));
-    let version: string | null = null;
+    const omp = Bun.which("omp");
+    let environment: SandboxEnvironment | null = null;
+    let failure: string | null = null;
     try {
-      version = await docker.doctor();
-    } catch {}
+      environment = await sandbox.doctor();
+    } catch (error) {
+      failure = String(error);
+    }
     console.log(
       JSON.stringify(
         {
           bun: Bun.version,
-          docker: version ?? "unavailable",
+          sandbox: environment ?? { kind: "bubblewrap", error: failure },
           drivers: driverReady ? "built" : "run bun run build",
+          externalHarness: {
+            ompBinary: omp ? "available" : "unavailable (install from https://omp.sh)",
+            ompDriver: existsSync(join(project, "dist/omp.js")) ? "built" : "run bun run build",
+          },
           openaiCredential: process.env.OPENAI_API_KEY
             ? "present"
             : "absent (scripted runs need none)",
           capabilities: {
-            provider: ["openai", "scripted"],
+            provider: ["openai", "scripted", "external/omp"],
             context: ["full-history/1"],
             streaming: false,
             steering: false,
             resume: false,
           },
-          readyForScriptedRun: Boolean(version && driverReady),
+          readyForScriptedRun: Boolean(environment && driverReady),
+          isolation: {
+            network: "none by default; explicit host sharing for model calls",
+            hostTools: "read-only /usr; host home is not mounted",
+            aggregateResourceLimits: "not enforced; cgroup integration is not implemented",
+          },
         },
         null,
         2,
       ),
     );
-    if (!version || !driverReady) process.exitCode = 1;
+    if (!environment || !driverReady) process.exitCode = 1;
     return;
   }
   if (!["run", "status", "cancel", "recover", "score", "report"].includes(command))
@@ -81,13 +95,13 @@ async function main() {
       const spec = experimentSchema.parse(await Bun.file(resolve(arg!)).json());
       const controller = new AbortController();
       const cancel = () => {
-        console.error("Cancellation requested; collecting and removing container…");
+        console.error("Cancellation requested; stopping sandbox and collecting artifacts…");
         controller.abort();
       };
       process.on("SIGINT", cancel);
       process.on("SIGTERM", cancel);
       try {
-        const id = await runExperiment(spec, store, project, controller.signal, docker);
+        const id = await runExperiment(spec, store, project, controller.signal, sandbox);
         await writeReport(id, store, resolve(values.out));
         console.log(`Report: ${resolve(values.out)}`);
         if (controller.signal.aborted) process.exitCode = 130;
@@ -96,10 +110,10 @@ async function main() {
         process.off("SIGTERM", cancel);
       }
     } else if (command === "recover") {
-      await recover(store, docker);
+      await recover(store, sandbox);
       console.log("Interrupted attempts reconciled. No attempts were rerun.");
     } else if (command === "score") {
-      await rescore(arg!, store, project, docker);
+      await rescore(arg!, store, project, sandbox);
       console.log("Scoring complete; existing identical evaluations retained.");
     } else if (command === "report") {
       await writeReport(arg!, store, resolve(values.out));

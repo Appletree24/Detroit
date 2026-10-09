@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { cases, repairScript } from "../src/cases";
 import {
   type DriverRequest,
+  driverConfiguration,
   experimentSchema,
   harnessVersion,
   variantSchema,
@@ -16,7 +17,8 @@ import { runHarness } from "../src/harness/runtime";
 import { ToolExecutor } from "../src/harness/tools";
 import { escapeHTML, type ReportRow, renderReport } from "../src/report";
 import { schedule } from "../src/runner";
-import { Docker, parseDriverOutput, snapshotFiles, writeFiles } from "../src/sandbox/docker";
+import { Bubblewrap } from "../src/sandbox/bubblewrap";
+import { parseDriverOutput, snapshotFiles, writeFiles } from "../src/sandbox/files";
 import { acquireLock, Store } from "../src/store";
 
 const dirs: string[] = [];
@@ -102,7 +104,7 @@ test("driver rejects partial frames, identity drift and config drift", () => {
   };
   const frames = [
     { type: "ready", protocol_version: 1, harness_version: harnessVersion },
-    { type: "accepted", attempt_id: "a1", effective_config: variant },
+    { type: "accepted", attempt_id: "a1", configuration: driverConfiguration(variant) },
     {
       type: "done",
       result: {
@@ -134,36 +136,101 @@ test("driver rejects partial frames, identity drift and config drift", () => {
   ).toThrow("drift");
 });
 
-test("Docker failures still issue container cleanup; contract only, no daemon involved", async () => {
-  const commands: string[][] = [];
+test("driver records observation separately from requested controls", () => {
+  const variant = variantSchema.parse({
+    id: "omp",
+    driver: "omp",
+    provider: "external",
+    model: "openai/requested",
+  });
+  const configuration = driverConfiguration(variant);
+  const observed = {
+    ...configuration,
+    observed: { model: { provider: "openai", id: "resolved" } },
+    unknown: configuration.unknown.filter((key) => key !== "model"),
+  };
+  const request: DriverRequest = {
+    protocol_version: 1,
+    attempt_id: "a1",
+    instruction: "fixture",
+    variant,
+  };
+  const frames = [
+    { type: "ready", protocol_version: 1, harness_version: "omp-shim/0.2.0" },
+    { type: "accepted", attempt_id: "a1", configuration },
+    {
+      type: "done",
+      configuration: observed,
+      result: {
+        stopReason: "final_response",
+        modelCalls: 0,
+        toolCalls: 0,
+        knownTokens: 0,
+        usageComplete: false,
+        costUSD: null,
+        elapsedMs: 1,
+        countersComplete: false,
+      },
+    },
+  ];
+  const output = {
+    code: 0,
+    stdout: frames.map((frame) => JSON.stringify(frame)).join("\n"),
+    stderr: "",
+    timedOut: false,
+    aborted: false,
+    truncated: false,
+  };
+  let received: unknown;
+  parseDriverOutput(output, request, (value) => {
+    received = value;
+  });
+  expect(received).toEqual(observed);
+  expect(configuration.applied.model).toBe("openai/requested");
+  expect(configuration.unknown).toContain("temperature");
+  expect(configuration.unsupported).toContain("budgets.totalTokens");
+  frames[2]!.configuration = { ...observed, requested: { ...variant, model: "different-request" } };
+  expect(() =>
+    parseDriverOutput(
+      { ...output, stdout: frames.map((frame) => JSON.stringify(frame)).join("\n") },
+      request,
+    ),
+  ).toThrow("drift");
+});
+
+test("missing Bubblewrap fails closed without executing candidate on host", async () => {
   const dir = await fixture();
   const variant = variantSchema.parse({ id: "test", provider: "scripted-noop" });
   const bundle = join(dir, "driver.js");
-  await writeFile(bundle, "// fixture");
-  const docker = new Docker(async (command) => {
-    commands.push(command);
-    return {
-      code: command[1] === "cp" ? 1 : 0,
-      stdout: "",
-      stderr: "injected cp failure",
-      timedOut: false,
-      aborted: false,
-      truncated: false,
-    };
-  });
-  const outcome = await docker.run({
+  await writeFile(bundle, "throw new Error('must not execute')");
+  const sandbox = new Bubblewrap({ bwrap: join(dir, "missing-bwrap") });
+  const outcome = await sandbox.run({
     item: cases[0]!,
     request: { protocol_version: 1, attempt_id: "a1", instruction: "fixture", variant },
-    image: "sha256:fixture",
+    network: "none",
     directory: dir,
     bundle,
     signal: new AbortController().signal,
   });
   expect(outcome.status).toBe("error");
   expect(outcome.cleanup).toBe(true);
-  expect(commands.some((c) => c[1] === "rm" && c.includes("detroit-a-a1"))).toBe(true);
-  expect(commands[0]).toContain("--network");
-  expect(commands[0]).toContain("none");
+  expect(outcome.error).toContain("Driver failed");
+  expect(outcome.error).not.toContain("must not execute");
+});
+
+test("legacy images and implicit OpenAI host networking are rejected", () => {
+  const spec = {
+    name: "test",
+    cases: ["clamp"],
+    variants: [{ id: "model", provider: "openai" }],
+  };
+  expect(() => experimentSchema.parse(spec)).toThrow("sandbox.network=host");
+  expect(experimentSchema.parse({ ...spec, sandbox: { network: "host" } }).sandbox.kind).toBe(
+    "bubblewrap",
+  );
+  expect(() =>
+    experimentSchema.parse({ ...spec, image: "old", sandbox: { network: "host" } }),
+  ).toThrow();
 });
 
 test("artifact collector rejects symlinks and binaries", async () => {

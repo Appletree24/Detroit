@@ -1,0 +1,13 @@
+{
+  "name": "OMP external harness",
+  "sandbox": { "kind": "bubblewrap", "network": "host" },
+  "cases": ["clamp", "unique", "chunk", "mean", "slug"],
+  "variants": [{
+    "id": "omp-external",
+    "driver": "omp",
+    "provider": "external",
+    "model": "openai/gpt-4.1-mini"
+  }],
+  "repeats": 1,
+  "seed": 42
+}
