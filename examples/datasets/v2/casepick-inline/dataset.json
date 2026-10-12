@@ -1,0 +1,30 @@
+{
+  "schema": "detroit.dataset/v2",
+  "id": "casepick:daily-2026-10",
+  "revision": 1,
+  "name": "CasePick 日常犯错 2026-10",
+  "purpose": "improvement",
+  "entries": [
+    {
+      "case": {
+        "id": "casepick:c_01JB7Q9X2M",
+        "revision": 1,
+        "task_digest": "sha256:22b13ccc4b4c5d1dbaf75aaa866cd684444dabc60f310388dc7769eefcd94ee1"
+      },
+      "scoring": [
+        {
+          "digest": "sha256:03677047827d98481ba6137e616f2ebbe23b3d2157131a22aab4e2faa07b44fd"
+        },
+        {
+          "id": "casepick:c_01JB7Q9X2M/lenient",
+          "revision": 1,
+          "digest": "sha256:8cb4405e7fa8aa56c53fbb4ea454a10f353d5aa876a89639cc43e7e6ca5ffdd0"
+        }
+      ],
+      "weight": 1
+    }
+  ],
+  "digests": {
+    "dataset": "sha256:a96eff42864bb4fe392f31eb9d718ab3c1074fdf8e6c756832163778695cfcb1"
+  }
+}

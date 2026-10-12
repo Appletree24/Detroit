@@ -1,0 +1,68 @@
+{
+  "schema": "detroit.case/v2",
+  "id": "swe-bench-verified:django__django-11099",
+  "revision": 1,
+  "title": "UsernameValidator allows trailing newline in usernames",
+  "suite": "swe-bench-verified",
+  "meta": {
+    "repo": "django/django"
+  },
+  "task": {
+    "kind": "agent",
+    "horizon": "episode",
+    "start": "original",
+    "instruction": "UsernameValidator allows trailing newline in usernames. (problem_statement 示意，已截短)",
+    "tools": {
+      "source": "environment"
+    },
+    "environment": {
+      "kind": "image",
+      "image": {
+        "ref": "swebench/sweb.eval.x86_64.django_1776_django-11099:latest"
+      },
+      "workspaces": [
+        {
+          "id": "repo",
+          "path": "/testbed",
+          "repo": "https://github.com/django/django",
+          "commit": "<base_commit>"
+        }
+      ],
+      "network": "none",
+      "resources": {
+        "timeout_s": 1800
+      }
+    },
+    "output": {
+      "format": "files",
+      "description": "修改后的工作区"
+    },
+    "max_steps": 100
+  },
+  "provenance": {
+    "source": {
+      "kind": "benchmark",
+      "reference": "django__django-11099",
+      "group_key": "django__django-11099",
+      "benchmark": {
+        "name": "swe-bench-verified",
+        "version": "<pinned>",
+        "instance_id": "django__django-11099"
+      }
+    },
+    "purpose": "validation",
+    "producer": {
+      "name": "detroit-loader-swe-bench",
+      "version": "0.1.0"
+    },
+    "created_at": "2026-10-12T12:00:00+08:00"
+  },
+  "digests": {
+    "task": "sha256:9b8abd26be0ac67c07a89d89508a9ee9c8d1f4ab93858d4df23f6028591b5d8e"
+  },
+  "extensions": {
+    "x-example": {
+      "note": "示意数据：problem_statement、base_commit、测试列表均已截短或用占位符，不是上游原文"
+    }
+  }
+}

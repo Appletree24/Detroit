@@ -75,6 +75,7 @@ Detroit/
 | [07 评测方法论](docs/07-methodology.md) | 统计、Judge 校准、失败归因、可复现性 |
 | [08 路线图](docs/08-roadmap.md) | 里程碑、验收标准、砍需求顺序 |
 | [09 设计决策记录](docs/09-decisions.md) | 关键取舍及理由 |
+| [10 评测集格式协议](docs/10-dataset-format.md) | 题目、评分、评测集三种文档，打包与导入检查（草案） |
 
 ## 快速开始（目标形态，M1 后可用）
 

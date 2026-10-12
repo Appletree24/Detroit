@@ -1,6 +1,6 @@
 # 04 协议
 
-Detroit 有两套协议：**Worker 协议**（控制面 ↔ Worker）和 **Subject 协议**（Worker ↔ 被测对象）。
+Detroit 有两套运行时协议：**Worker 协议**（控制面 ↔ Worker）和 **Subject 协议**（Worker ↔ 被测对象）。评测集怎么交给 Detroit（数据生产方 ↔ Detroit）见 [10 评测集格式协议](10-dataset-format.md)。
 
 ## 1. Worker 协议（gRPC）
 

@@ -1,0 +1,657 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Appletree24/Detroit/schemas/detroit-v2.schema.json",
+  "title": "Detroit 评测集格式 v2",
+  "description": "docs/10-dataset-format.md 的机器可读定义。摘要一致性、引文核对等跨字段检查不在 Schema 中，见文档 §10。",
+  "oneOf": [
+    { "$ref": "#/$defs/caseDocument" },
+    { "$ref": "#/$defs/scoringDocument" },
+    { "$ref": "#/$defs/datasetDocument" },
+    { "$ref": "#/$defs/judgeRequest" },
+    { "$ref": "#/$defs/judgeResponse" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "schemaMinor": { "type": "integer", "minimum": 0 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "extensions": {
+      "type": "object",
+      "propertyNames": { "pattern": "^x-[a-z0-9][a-z0-9-]*$" }
+    },
+    "blob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string" }
+      }
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "oneOf": [{ "required": ["content"] }, { "required": ["blob"] }],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "not": { "pattern": "(^/|(^|/)\\.\\.(/|$))" } },
+        "content": { "type": "string" },
+        "blob": { "$ref": "#/$defs/blob" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "media_type": { "type": "string" }
+      }
+    },
+
+    "toolCall": {
+      "type": "object",
+      "required": ["id", "type", "function"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "const": "function" },
+        "function": {
+          "type": "object",
+          "required": ["name", "arguments"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "arguments": { "type": "string" }
+          }
+        }
+      }
+    },
+    "message": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "content"],
+          "properties": {
+            "role": { "const": "user" },
+            "content": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role"],
+          "anyOf": [
+            { "required": ["content"], "properties": { "content": { "type": "string" } } },
+            { "required": ["tool_calls"] }
+          ],
+          "properties": {
+            "role": { "const": "assistant" },
+            "content": { "type": ["string", "null"] },
+            "tool_calls": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolCall" } },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "tool_call_id", "content"],
+          "properties": {
+            "role": { "const": "tool" },
+            "tool_call_id": { "type": "string", "minLength": 1 },
+            "content": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "toolDefinition": {
+      "type": "object",
+      "required": ["type", "function"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "function" },
+        "function": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "description": { "type": "string" },
+            "parameters": { "type": "object" },
+            "strict": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "status"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["missing", "approximate", "unrecoverable"] },
+        "note": { "type": "string" }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "target"],
+      "properties": {
+        "type": { "enum": ["redact", "truncate", "omit_image", "drop_thinking"] },
+        "target": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "method": { "type": "string" }
+      }
+    },
+
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "horizon", "start"],
+      "anyOf": [{ "required": ["instruction"] }, { "required": ["messages"] }],
+      "if": { "properties": { "horizon": { "const": "next_message" } } },
+      "then": {
+        "required": ["messages"],
+        "properties": { "max_steps": false }
+      },
+      "properties": {
+        "kind": { "const": "agent" },
+        "horizon": { "enum": ["next_message", "episode"] },
+        "start": { "enum": ["original", "current"] },
+        "instruction": { "type": "string" },
+        "messages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/message" } },
+        "system": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "content"],
+          "properties": {
+            "status": { "enum": ["captured", "approximate", "missing"] },
+            "content": { "type": ["string", "null"] }
+          }
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "enum": ["captured", "approximate", "environment", "none"] },
+            "definitions": { "type": "array", "items": { "$ref": "#/$defs/toolDefinition" } }
+          }
+        },
+        "environment": { "$ref": "#/$defs/environment" },
+        "materials": { "type": "array", "items": { "$ref": "#/$defs/material" } },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format"],
+          "properties": {
+            "format": { "enum": ["text", "json", "tool_calls", "files", "mixed"] },
+            "description": { "type": "string" }
+          }
+        },
+        "max_steps": { "type": "integer", "minimum": 1 },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["none", "image", "unavailable"] },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "oneOf": [{ "required": ["ref"] }, { "required": ["build"] }],
+          "properties": {
+            "ref": { "type": "string", "minLength": 1 },
+            "digest": { "$ref": "#/$defs/digest" },
+            "build": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dockerfile"],
+              "properties": {
+                "dockerfile": { "$ref": "#/$defs/blob" },
+                "context": { "$ref": "#/$defs/blob" }
+              }
+            }
+          }
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "path"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "path": { "type": "string", "minLength": 1 },
+              "repo": { "type": "string" },
+              "commit": { "type": "string" },
+              "snapshot": { "$ref": "#/$defs/blob" }
+            }
+          }
+        },
+        "setup": { "type": "array", "items": { "type": "string" } },
+        "network": { "enum": ["none", "allowlist", "host"], "default": "none" },
+        "allowlist": { "type": "array", "items": { "type": "string" } },
+        "credentials": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_]+$" } },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "number", "exclusiveMinimum": 0 },
+            "memory_mb": { "type": "integer", "minimum": 1 },
+            "disk_mb": { "type": "integer", "minimum": 1 },
+            "timeout_s": { "type": "integer", "minimum": 1 }
+          }
+        }
+      },
+      "if": { "properties": { "kind": { "const": "image" } } },
+      "then": { "required": ["image"] }
+    },
+
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observed": {
+          "oneOf": [
+            { "$ref": "#/$defs/message" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trajectory"],
+              "properties": { "trajectory": { "$ref": "#/$defs/blob" } }
+            }
+          ]
+        },
+        "violates": { "type": "array", "items": { "type": "string" } },
+        "followup": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["taxonomy", "label"],
+            "properties": {
+              "taxonomy": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 },
+              "primary": { "type": "boolean" }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "purpose", "producer", "created_at"],
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["session", "issue", "oncall", "benchmark", "generated", "manual"] },
+            "reference": { "type": "string" },
+            "group_key": { "type": "string", "minLength": 1 },
+            "benchmark": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version", "instance_id"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "version": { "type": "string", "minLength": 1 },
+                "instance_id": { "type": "string", "minLength": 1 },
+                "license": { "type": "string" }
+              }
+            }
+          },
+          "if": { "properties": { "kind": { "const": "benchmark" } } },
+          "then": { "required": ["benchmark"] }
+        },
+        "purpose": { "enum": ["improvement", "validation"] },
+        "producer": { "$ref": "#/$defs/producer" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } },
+        "transforms": { "type": "array", "items": { "$ref": "#/$defs/transform" } }
+      }
+    },
+
+    "scope": { "enum": ["final_text", "all_text", "tool_calls"] },
+    "check": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "type": "string", "minLength": 1 } },
+      "description": "已登记类型按下面的分支严格校验；未登记类型只要求有 type，平台给出警告并在运行时判 unknown（文档 §7.3）。",
+      "anyOf": [
+        { "$ref": "#/$defs/checkKnown" },
+        {
+          "properties": {
+            "type": {
+              "not": {
+                "enum": ["json_only", "json_schema", "contains", "not_contains", "regex", "not_regex",
+                         "tool_called", "tool_not_called", "file_exists", "file_contains", "command", "tests"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "checkKnown": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type"],
+          "properties": { "type": { "const": "json_only" }, "scope": { "$ref": "#/$defs/scope" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "schema"],
+          "properties": { "type": { "const": "json_schema" }, "schema": { "type": "object" }, "scope": { "$ref": "#/$defs/scope" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text"],
+          "properties": {
+            "type": { "enum": ["contains", "not_contains"] },
+            "text": { "type": "string", "minLength": 1 },
+            "ignore_case": { "type": "boolean" },
+            "scope": { "$ref": "#/$defs/scope" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "pattern"],
+          "properties": {
+            "type": { "enum": ["regex", "not_regex"] },
+            "pattern": { "type": "string", "minLength": 1 },
+            "flags": { "type": "string", "pattern": "^[imsu]*$" },
+            "scope": { "$ref": "#/$defs/scope" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "name"],
+          "properties": {
+            "type": { "enum": ["tool_called", "tool_not_called"] },
+            "name": { "type": "string", "minLength": 1 },
+            "args_match": { "type": "object" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "path"],
+          "properties": {
+            "type": { "enum": ["file_exists", "file_contains"] },
+            "path": { "type": "string", "minLength": 1 },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "run"],
+          "properties": {
+            "type": { "const": "command" },
+            "run": { "type": "string", "minLength": 1 },
+            "cwd": { "type": "string" },
+            "timeout_s": { "type": "integer", "minimum": 1 },
+            "pass_exit_codes": { "type": "array", "items": { "type": "integer" }, "default": [0] },
+            "error_exit_codes": { "type": "array", "items": { "type": "integer" } }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "run", "must_pass", "report"],
+          "properties": {
+            "type": { "const": "tests" },
+            "run": { "type": "string", "minLength": 1 },
+            "cwd": { "type": "string" },
+            "timeout_s": { "type": "integer", "minimum": 1 },
+            "must_pass": { "type": "array", "items": { "type": "string" } },
+            "must_still_pass": { "type": "array", "items": { "type": "string" } },
+            "report": { "enum": ["junit", "pytest-json", "exit_code"] }
+          }
+        }
+      ]
+    },
+    "rubric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question", "pass", "fail"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "pass": { "type": "string", "minLength": 1 },
+        "fail": { "type": "string", "minLength": 1 },
+        "edge_cases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verdict", "origin", "text"],
+            "properties": {
+              "verdict": { "enum": ["pass", "fail"] },
+              "origin": { "enum": ["observed", "written"] },
+              "text": { "type": "string", "minLength": 1 },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "scope": { "$ref": "#/$defs/scope" }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "required"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "text": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "weight": { "type": "number", "minimum": 0 },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object", "additionalProperties": false, "required": ["message", "quote"],
+              "properties": { "message": { "type": "integer", "minimum": 0 }, "quote": { "type": "string", "minLength": 1 } }
+            },
+            {
+              "type": "object", "additionalProperties": false, "required": ["material", "quote"],
+              "properties": { "material": { "type": "string", "minLength": 1 }, "quote": { "type": "string", "minLength": 1 } }
+            },
+            {
+              "type": "object", "additionalProperties": false, "required": ["external"],
+              "properties": { "external": { "type": "string", "minLength": 1 } }
+            }
+          ]
+        },
+        "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "rubric": { "$ref": "#/$defs/rubric" }
+      },
+      "anyOf": [
+        { "required": ["rubric"] },
+        { "required": ["checks"], "properties": { "checks": { "minItems": 1 } } }
+      ]
+    },
+    "combine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule"],
+      "properties": {
+        "rule": { "const": "required_then_threshold" },
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "scoringBody": {
+      "type": "object",
+      "required": ["combine", "requirements"],
+      "properties": {
+        "combine": { "$ref": "#/$defs/combine" },
+        "requirements": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/requirement" } },
+        "materials": { "type": "array", "items": { "$ref": "#/$defs/material" } }
+      }
+    },
+    "inlineScoring": {
+      "allOf": [{ "$ref": "#/$defs/scoringBody" }],
+      "unevaluatedProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "producer": { "$ref": "#/$defs/producer" }
+      }
+    },
+
+    "caseDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "revision", "title", "task", "provenance", "digests"],
+      "properties": {
+        "schema": { "const": "detroit.case/v2" },
+        "schema_minor": { "$ref": "#/$defs/schemaMinor" },
+        "id": { "$ref": "#/$defs/id" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "suite": { "type": "string", "minLength": 1 },
+        "meta": { "type": "object", "additionalProperties": { "type": "string" } },
+        "task": { "$ref": "#/$defs/task" },
+        "scoring": { "$ref": "#/$defs/inlineScoring" },
+        "diagnostic": { "$ref": "#/$defs/diagnostic" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "digests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task"],
+          "properties": { "task": { "$ref": "#/$defs/digest" }, "scoring": { "$ref": "#/$defs/digest" } }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "if": { "required": ["scoring"] },
+      "then": { "properties": { "digests": { "required": ["task", "scoring"] } } }
+    },
+    "scoringDocument": {
+      "allOf": [{ "$ref": "#/$defs/scoringBody" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["schema", "id", "revision", "target", "digests"],
+      "properties": {
+        "schema": { "const": "detroit.scoring/v2" },
+        "schema_minor": { "$ref": "#/$defs/schemaMinor" },
+        "id": { "$ref": "#/$defs/id" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "label": { "type": "string" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["case_id", "task_digest"],
+          "properties": { "case_id": { "$ref": "#/$defs/id" }, "task_digest": { "$ref": "#/$defs/digest" } }
+        },
+        "producer": { "$ref": "#/$defs/producer" },
+        "digests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scoring"],
+          "properties": { "scoring": { "$ref": "#/$defs/digest" } }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "datasetDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "revision", "name", "purpose", "entries", "digests"],
+      "properties": {
+        "schema": { "const": "detroit.dataset/v2" },
+        "schema_minor": { "$ref": "#/$defs/schemaMinor" },
+        "id": { "$ref": "#/$defs/id" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "name": { "type": "string", "minLength": 1 },
+        "purpose": { "enum": ["improvement", "validation"] },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["case", "scoring"],
+            "properties": {
+              "case": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "revision", "task_digest"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/id" },
+                  "revision": { "$ref": "#/$defs/revision" },
+                  "task_digest": { "$ref": "#/$defs/digest" }
+                }
+              },
+              "scoring": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["digest"],
+                  "properties": {
+                    "id": { "$ref": "#/$defs/id" },
+                    "revision": { "$ref": "#/$defs/revision" },
+                    "digest": { "$ref": "#/$defs/digest" }
+                  }
+                }
+              },
+              "weight": { "type": "number", "minimum": 0 },
+              "suite": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "digests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset"],
+          "properties": { "dataset": { "$ref": "#/$defs/digest" } }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+
+    "judgeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "requirement", "context", "output"],
+      "properties": {
+        "schema": { "const": "detroit.judge/v1" },
+        "requirement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "text", "rubric"],
+          "properties": {
+            "id": { "type": "string" },
+            "text": { "type": "string" },
+            "rubric": { "$ref": "#/$defs/rubric" }
+          }
+        },
+        "context": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": { "type": ["string", "null"] },
+            "tool_calls": { "type": "array", "items": { "$ref": "#/$defs/toolCall" } }
+          }
+        }
+      }
+    },
+    "judgeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirement", "verdict", "evidence", "reason"],
+      "properties": {
+        "requirement": { "type": "string" },
+        "verdict": { "enum": ["pass", "fail", "unknown"] },
+        "evidence": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

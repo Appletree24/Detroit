@@ -1,0 +1,50 @@
+{
+  "schema": "detroit.scoring/v2",
+  "id": "swe-bench-verified:django__django-11099/official",
+  "revision": 1,
+  "label": "official",
+  "target": {
+    "case_id": "swe-bench-verified:django__django-11099",
+    "task_digest": "sha256:9b8abd26be0ac67c07a89d89508a9ee9c8d1f4ab93858d4df23f6028591b5d8e"
+  },
+  "producer": {
+    "name": "detroit-loader-swe-bench",
+    "version": "0.1.0"
+  },
+  "combine": {
+    "rule": "required_then_threshold"
+  },
+  "requirements": [
+    {
+      "id": "tests",
+      "text": "FAIL_TO_PASS 中的测试全部通过，PASS_TO_PASS 中的测试仍然通过",
+      "required": true,
+      "source": {
+        "external": "SWE-bench FAIL_TO_PASS / PASS_TO_PASS"
+      },
+      "checks": [
+        {
+          "type": "tests",
+          "run": "./tests/runtests.py --verbosity 2 auth_tests.test_validators",
+          "cwd": "/testbed",
+          "must_pass": [
+            "auth_tests.test_validators.UsernameValidatorsTests.test_ascii_validator"
+          ],
+          "must_still_pass": [
+            "auth_tests.test_validators.PasswordValidationTest.test_validate_password"
+          ],
+          "report": "exit_code"
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "path": "test.patch",
+      "content": "(test_patch 示意，loader 从上游填入)"
+    }
+  ],
+  "digests": {
+    "scoring": "sha256:c95a7b956f309586ca0949677bf4f8e9457a160f47f842b560074690d8ee69c6"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "detroit.dataset/v2",
+  "id": "swe-bench-verified:sample",
+  "revision": 1,
+  "name": "SWE-bench Verified 示意子集",
+  "purpose": "validation",
+  "entries": [
+    {
+      "case": {
+        "id": "swe-bench-verified:django__django-11099",
+        "revision": 1,
+        "task_digest": "sha256:9b8abd26be0ac67c07a89d89508a9ee9c8d1f4ab93858d4df23f6028591b5d8e"
+      },
+      "scoring": [
+        {
+          "id": "swe-bench-verified:django__django-11099/official",
+          "revision": 1,
+          "digest": "sha256:c95a7b956f309586ca0949677bf4f8e9457a160f47f842b560074690d8ee69c6"
+        }
+      ]
+    }
+  ],
+  "digests": {
+    "dataset": "sha256:84e25f3d36b4f7c09e29d35579fb1ec2f24c768c8225e4ca11453d7bee6b6306"
+  }
+}
