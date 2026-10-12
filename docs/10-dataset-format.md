@@ -1,7 +1,7 @@
 # 10 评测集格式协议
 
 > 版本 v2 草案，2026-10-12。状态：**待审阅**。
-> 已确认的决定只有两条（见 09 D10、D11）：协议由 Detroit 定义和维护；评分定义可以和题目分开分发。其余内容是设计建议，实现前需要再审阅。
+> 已确认的决定：协议由 Detroit 定义和维护；评分定义可以和题目分开分发（见 09 D10、D11）；§13 中 4 个问题的处理方式。其余内容是设计建议，实现前需要再审阅。
 > 机器可读的定义见 [`schemas/detroit-v2.schema.json`](../schemas/detroit-v2.schema.json)（JSON Schema 2020-12）。它只覆盖结构；摘要、引文核对等跨字段检查见 §10。
 > 示例见 [`examples/datasets/v2/`](../examples/datasets/v2/)：`casepick-inline` 是一道对话续写题，带内联默认评分和一份单独分发的宽松版评分；`swe-bench-bundle` 是任务级题目的 bundle（示意数据，不是上游原文）。示例都通过了 Schema 校验，摘要按 §4 计算。
 
@@ -241,7 +241,7 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 
 - 任一必过条件 `fail` → 整题 `fail`，不管其他结果。
 - 所有必过条件都 `pass`，并且加分项加权得分达到 `threshold`（没有加分项或没写 `threshold` 时跳过）→ 整题 `pass`。
-- 其余情况 → 整题 `unknown`。`unknown` 不能当作失败计入成功率，也不能悄悄从分母里去掉；如何在报告中展示见 §13 待定问题 1。
+- 其余情况 → 整题 `unknown`。`unknown` 不能当作失败计入成功率，也不能悄悄从分母里去掉；在统计和报告中的处理见 §13 第 1 条。
 - 加分项里的 `unknown` 不补零，加权得分只按已知项计算，同时报告覆盖比例。
 
 ### 7.5 rubric
@@ -405,9 +405,11 @@ CasePick 的内部记录和导出都直接使用本格式，私有信息放在 `
 | `detroit.case/v1`（M1 导入清单） | `instruction` → `task.instruction`；`materials[role=input]` → `task.materials`，`role=scoring` → `scoring.materials`，`role=diagnostic` → `diagnostic`（作为 blob）；`acceptance.description` → 一条只有 rubric 的必过要求，`question` 需要人补；`source.usedForImprovement` → `provenance.purpose`；`missing` → `provenance.limitations`；`approvalDigest`、`sourcePath`、平台 `groupId` 丢弃 |
 | `casepick.case/v1` | 见 12.1；`quality` / `judge_mode` 丢弃（可以从有没有 `checks` 推出来）；单一 `hash` 拆成 `digests.task` 和 `digests.scoring` |
 
-## 13. 待定问题
+## 13. 已处理的问题
 
-1. **`unknown` 在统计中怎么处理。** 03 的 `Outcome` 只有 `Success | Failure`，07 的 Wilson 区间也只用成功和失败计数。建议新增 `Outcome = Unknown`：不计入分母，但和 `infra_error` 一样单列展示比例，比例过高时整次 run 标为无效。需要同步改 03、07。
-2. **`next_message` 题在 Worker 里怎么跑。** 不需要沙箱，可以由一个轻量的"对话 Worker"处理，也可以由 Agent Worker 跳过沙箱步骤。前者更清晰，后者少一个组件。
-3. **工具定义是 `approximate` 的题目能不能和 `captured` 的混在一起比较。** 建议报告中按 `tools.source` 分组展示，但不阻止混用。
-4. **评测集里同一道题挂多份评分时，RunSpec 怎么写。** 建议 `scorers.select: "<label>"` 或 `scorers.select: all`，在 03 §4 的 RunSpec 示例里补上。
+起草时列出的 4 个问题，2026-10-12 用户同意按建议处理，已同步到相关文档：
+
+1. **`unknown` 在统计中怎么处理。** 新增 `Outcome = Unknown`：不计入成功率分母，也不算失败；和 `infra_error` 一样单列展示比例，超过阈值（默认 10%）时整次 run 标为无效。见 02 §4.1、03 `EpisodeResult` / `Aggregate`、07 §1、§6。
+2. **`next_message` 题在 Worker 里怎么跑。** 由轻量的对话 Worker 执行，不启动沙箱，工具调用只记录不执行。见 02 §3.5。
+3. **工具定义近似的题目能不能和其他题混在一起比较。** 不阻止混用；报告按 `task.tools.source` 和 `task.system.status` 分组展示。见 07 §6 第 7 项。
+4. **一道题挂多份评分时 RunSpec 怎么写。** `scorers.select: all` 或某个评分的 `label`；默认 `all`，不同评分的结果分别报告。见 03 §4。

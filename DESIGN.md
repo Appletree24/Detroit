@@ -1,6 +1,6 @@
 # Detroit — Coding Agent Harness 与评测实验平台
 
-> 状态：M1 基础代码、真实 Bubblewrap 隔离与整批 smoke 已验收，真实模型实验待完成；当前能力见 [docs/M1.md](docs/M1.md)
+> 状态：M1 基础代码、真实 Bubblewrap 隔离与整批 smoke 已验收，真实模型实验待完成；当时的能力见 docs/M1.md（该文档已在 a3c8018 文档重构中移除，可用 `git show 3b8259a:docs/M1.md` 查看）
 > 更新：2026-09-22
 > 目标岗位：Agent Harness 开发 / LLM 评测工程
 > 目标优先级：有实证的面试项目 → 个人自用 → 开源传播
@@ -435,7 +435,7 @@ detroit/
   docs/INTERVIEW.md
 ```
 
-目录按实现进度创建。ADR 优先记录上下文表示、工具副作用、评测单位、judge 效度和自研边界；避免为每个类型增加抽象层。面试讲述与证据要求见 [INTERVIEW.md](docs/INTERVIEW.md)。
+目录按实现进度创建。ADR 优先记录上下文表示、工具副作用、评测单位、judge 效度和自研边界；避免为每个类型增加抽象层。面试讲述与证据要求见 docs/INTERVIEW.md（该文档已在 a3c8018 文档重构中移除，可用 `git show 3b8259a:docs/INTERVIEW.md` 查看）。
 
 ## 15. 参考与待验证事项
 

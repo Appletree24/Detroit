@@ -70,6 +70,7 @@ episode_key = sha256(上面六元组 + subject_digest + env_digest)
 ### 3.5 Workers
 - 每个垂类一个 Worker 实现，遵守统一的 Worker 协议（见 04）。
 - Worker 内部负责：环境构建、重置到指定初始状态、与 Subject 交互、执行 Scorer 中的"在线"部分（需要环境内部状态的检查）、录制制品。
+- `horizon: next_message` 的题目（10 §6.2）由轻量的对话 Worker 执行：不启动沙箱，只把 `task.messages` 发给 Subject 一次并记录返回，工具调用只记录不执行。
 
 ### 3.6 离线分析
 - **Stats**：纯 Go，按 task / suite / variant 聚合，计算区间与检验。
@@ -89,7 +90,7 @@ results(episode_key PK, outcome, score, steps, duration_ms, cost_json,
 labels(episode_key, labeler, label, confidence, rationale, created_at)   -- 失败归因
 ```
 
-`status ∈ {pending, leased, done, infra_error}`；`outcome ∈ {success, failure}`。
+`status ∈ {pending, leased, done, infra_error}`；`outcome ∈ {success, failure, unknown}`；`unknown` 表示评分依据不足（10 §7.4），和 `infra_error` 一样不计入成功率分母。
 
 ### 4.2 制品
 

@@ -105,7 +105,7 @@ type OfflineScorer interface {
 ```go
 type EpisodeResult struct {
     Key        string
-    Outcome    Outcome     // Success | Failure
+    Outcome    Outcome     // Success | Failure | Unknown（评分依据不足，见 10 §7.4）
     Status     Status      // Done | InfraError
     ErrorKind  string      // 仅 InfraError：sandbox_boot | sim_crash | subject_timeout …
     Score      OnlineScore
@@ -131,11 +131,12 @@ type Label struct {
 ```go
 type Aggregate struct {
     GroupBy     []string // e.g. ["suite","variant"]
-    N           int      // 有效 episode 数（不含 InfraError）
+    N           int      // 有效 episode 数（不含 InfraError 和 Unknown）
     Successes   int
     Rate        float64
     CI95        [2]float64 // Wilson 区间
     InfraErrors int
+    Unknowns    int      // Outcome 为 Unknown 的 episode 数，单列展示
     LabelDist   map[string]int
 }
 ```
@@ -168,6 +169,7 @@ taskset:
   repeats: 1
 scorers:
   offline: [vlm_failure_judge@v1]
+  select: all               # 题目挂了多份评分时用哪份：all 或某个 label（10 §8）
 stats:
   confidence: 0.95
   compare_to: run_2026_10_20_baseline   # 可选：与基线配对比较

@@ -7,6 +7,7 @@
 一次 run 的结果有效，当且仅当：
 
 - `infra_error` 比例 ≤ 5%（可配置）；超过则整次 run 标记为 `invalid`，报告只展示诊断信息。
+- `unknown`（评分依据不足）比例 ≤ 10%（可配置）；超过同样标记为 `invalid`。`unknown` 不计入成功率的分母，也不算失败。
 - 标定 suite（如有）通过：复现值落在公开值的置信区间内。
 - manifest 完整（见 §5）。
 
@@ -125,11 +126,12 @@ impact(label) = count(primary == label) / N
 每份报告必须包含：
 
 1. 结论摘要（一句话 + 是否显著）。
-2. 有效性检查结果（infra_error 比例、sanity checks、标定）。
+2. 有效性检查结果（infra_error 比例、unknown 比例、sanity checks、标定）。
 3. 分组成功率表（含 CI、N）。
 4. 与基线的配对比较（如有）。
 5. 失败分布与影响排序，附代表性样本链接（视频 / 对话）。
 6. 吞吐与成本。
-7. Manifest 摘要。
+7. 输入完整度：按题目的 `task.tools.source` 和 `task.system.status`（10 §6.2）分组展示成功率，标出工具定义或系统提示是近似、缺失的题目。
+8. Manifest 摘要。
 
 报告中**不允许出现没有 N 和 CI 的成功率**。
