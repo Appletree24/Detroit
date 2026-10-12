@@ -1,10 +1,7 @@
-.detroit/
-dist/
+/bin/
+/.detroit/
+*.db
+*.db-shm
+*.db-wal
 .env
 .env.*
-!.env.example
-node_modules/
-.omp-extract/
-*.sqlite*
-*.tmp
-.tools/

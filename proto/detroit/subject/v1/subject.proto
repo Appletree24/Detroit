@@ -1,0 +1,29 @@
+syntax = "proto3";
+package detroit.subject.v1;
+
+option go_package = "github.com/Appletree24/Detroit/gen/detroit/subject/v1;subjectv1";
+
+// Subject 协议：Worker ↔ 被测对象（docs/04 §2）。
+service Subject {
+  rpc Describe(Empty) returns (SubjectInfo);
+  rpc Reset(ResetReq) returns (Empty);              // 新 episode 开始
+  rpc Act(ActReq) returns (ActResp);                // 单个观测 → 动作
+  rpc ActBatch(ActBatchReq) returns (ActBatchResp); // 多环境批量推理
+}
+
+message Empty {}
+
+message SubjectInfo {
+  string name = 1;
+  string digest = 2;        // 写入 manifest
+  string obs_schema = 3;    // 期望的观测字段，如 "agentview_rgb,wrist_rgb,state,instruction"
+  string action_schema = 4; // 如 "eef_delta_7d" | "tool_call"
+  int32 action_horizon = 5; // 动作块长度 H（Agent 为 1）
+  bool stateful = 6;
+}
+
+message ResetReq     { string session_id = 1; string task_id = 2; int64 seed = 3; }
+message ActReq       { string session_id = 1; bytes observation = 2; }  // observation 为 msgpack 编码
+message ActResp      { bytes actions = 1; map<string, string> debug = 2; } // actions: H×D 数组或工具调用 JSON
+message ActBatchReq  { repeated ActReq items = 1; }
+message ActBatchResp { repeated ActResp items = 1; }

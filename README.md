@@ -38,26 +38,34 @@ Detroit 的目标不是提出新的 benchmark，而是把业界零散的最佳�
 
 ## 仓库结构
 
+标 ✅ 的目录已有代码，其余按 [路线图](docs/08-roadmap.md) 逐步落地。
+
 ```
 Detroit/
 ├── cmd/
-│   ├── detroit/            # CLI：提交 run、查看进度、导出报告
-│   └── controller/         # 控制面服务
+│   ├── detroit/            # ✅ CLI：提交 run、查看进度、取消；mock Worker
+│   └── controller/         # ✅ 控制面服务（gRPC Worker 协议 + HTTP API）
 ├── internal/
-│   ├── core/               # 核心抽象（Go interface 定义）
-│   ├── scheduler/          # 切分、租约、重试、续跑
-│   ├── store/              # 元数据（SQLite/Postgres）+ 制品（本地 FS / MinIO）
-│   ├── stats/              # 置信区间、检验、样本量
+│   ├── core/               # ✅ 核心类型、RunSpec 解析、episode 幂等键
+│   ├── scheduler/          # ✅ 切分、租约、重试、续跑
+│   ├── store/              # ✅ 元数据（SQLite）；制品存储待做
+│   ├── stats/              # ✅ Wilson 区间；配对检验、样本量待做
+│   ├── taskset/            # ✅ TaskSet Loader 注册表（内置 synthetic）
+│   ├── workerkit/          # ✅ Go Worker 运行时（注册、拉取、心跳、上报）+ mock Executor
+│   ├── api/                # ✅ API Server
 │   ├── analyze/            # 失败归因、聚类
 │   └── report/             # 报告生成（Markdown / HTML）
-├── proto/                  # Subject 协议、Worker 协议（protobuf）
+├── proto/                  # ✅ Subject 协议、Worker 协议（protobuf）；生成代码在 gen/
 ├── workers/
-│   ├── agent/              # Python/Go：沙箱环境 worker
+│   ├── agent/              # 沙箱环境 worker；✅ sandbox/：Docker 沙箱（L1，可切 gVisor）
 │   └── embodied/           # Python：MuJoCo / LIBERO 环境 worker
 ├── subjects/               # 被测对象适配器（LLM API、openpi、LeRobot 策略…）
 ├── verticals/
 │   ├── agent/              # Agent 任务集、评分器、自定义评测集构建器
 │   └── embodied/           # 具身任务集、扰动套件、子目标谓词
+├── schemas/                # ✅ 评测集格式协议 v2 的 JSON Schema
+├── examples/               # ✅ RunSpec 与评测集示例
+├── test/e2e/               # ✅ 真实进程的端到端测试（kill -9 续跑）
 ├── deploy/                 # docker-compose / 单机脚本
 └── docs/
 ```
@@ -77,26 +85,31 @@ Detroit/
 | [09 设计决策记录](docs/09-decisions.md) | 关键取舍及理由 |
 | [10 评测集格式协议](docs/10-dataset-format.md) | 题目、评分、评测集三种文档，打包与导入检查（草案） |
 
-## 快速开始（目标形态，M1 后可用）
+## 快速开始
+
+需要 Go 1.25+。当前只有内核骨架：任务来自内置的 `synthetic` 来源，由 mock Worker 执行，不调用模型、不启动沙箱。
 
 ```bash
-# 1. 启动控制面（单机模式，SQLite + 本地文件存储）
+# 1. 启动控制面（单机模式，SQLite 存在 .detroit/ 下；gRPC :7070，HTTP :7071）
 make up
 
-# 2. 启动被测对象（示例：一个 OpenAI 兼容接口的 LLM Agent）
-detroit subject serve --adapter openai-compatible --model <your-model>
+# 2. 另开终端，启动一个 mock Worker
+./bin/detroit worker mock --slots 8
 
-# 3. 提交评测
-detroit run submit -f examples/agent-smoke.yaml
+# 3. 提交评测；重复提交同一个 RunSpec 等于续跑
+./bin/detroit run submit -f examples/runspecs/mock-smoke.yaml
 
-# 4. 查看结果与报告
-detroit run status <run-id>
-detroit report <run-id> --format md
+# 4. 查看进度与带置信区间的成功率；取消
+./bin/detroit run list
+./bin/detroit run status <run-id>
+./bin/detroit run cancel <run-id>
 ```
+
+开发：`make test`（含 kill -9 端到端测试）、`make test-short`、`make lint`、`make proto`（重新生成 gRPC 代码，需要 protoc）。
 
 ## 项目状态
 
-见 [路线图](docs/08-roadmap.md)。所有对外宣称的数字都以 `results/` 下带运行清单的实测结果为准，未实测的数字一律不写。
+M1 进行中，各项交付的完成情况见 [路线图](docs/08-roadmap.md)。所有对外宣称的数字都以 `results/` 下带运行清单的实测结果为准，未实测的数字一律不写。
 
 ## License
 

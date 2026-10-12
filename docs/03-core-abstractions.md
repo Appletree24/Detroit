@@ -151,7 +151,11 @@ type Aggregate struct {
 | Failure Taxonomy | `verticals/<vertical>/taxonomy.yaml` | 该垂类的失败分类体系 |
 | Offline Scorers | `verticals/<vertical>/scorers` | Judge 提示词与解析逻辑 |
 
+TaskSet Loader 的接口是 `Load(ctx, TaskSetSpec) → []TaskEntry`，每项是一个 `Task` 和它的全部 `InitState`。控制面用它展开 episode；Worker 用同一个 Loader 根据 `task_id` 取回任务内容，所以租约里只需下发 `Episode` 本身。内置一个 `synthetic` 来源，按参数生成占位任务，供 mock Worker 和测试使用。
+
 ## 4. RunSpec 示例
+
+展开规则：`episodes = tasks × variants × init_states × seeds × repeats`，顺序确定。字段的默认值：`variants: [base]`、`init_states: all`、`seeds: [0]`、`repeats: 1`、`scorers.select: all`、`stats.confidence: 0.95`。未知字段一律拒绝。
 
 ```yaml
 name: pi05-libero-spatial-camera
@@ -165,8 +169,11 @@ taskset:
   source: libero
   suites: [libero_spatial]
   variants: [base, camera_shift_15deg]
-  init_states: all          # 每个任务的全部固定初始状态
+  init_states: all          # 每个任务的全部固定初始状态；也可以写正整数 N（前 N 个）或一组 ID
+  seeds: [0]                # 默认 [0]
   repeats: 1
+  env_digest: libero@1.0    # 环境的不可变标识（镜像 digest、benchmark 版本），参与 episode_key
+  options: {}               # 交给 TaskSet Loader 的来源特定参数
 scorers:
   offline: [vlm_failure_judge@v1]
   select: all               # 题目挂了多份评分时用哪份：all 或某个 label（10 §8）

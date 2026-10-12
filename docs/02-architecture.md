@@ -42,6 +42,7 @@
 ### 3.1 API Server
 - 接收 RunSpec（YAML），校验后写入数据库，返回 run_id。
 - 提供查询接口：进度、失败 episode 列表、报告。
+- 传输用 HTTP + JSON（CLI 和脚本都能直接调用）：`POST /v1/runs`、`GET /v1/runs`、`GET /v1/runs/{id}`、`POST /v1/runs/{id}/cancel`。
 
 ### 3.2 Run Planner
 把一个 RunSpec 展开为 Episode 列表：
@@ -53,11 +54,17 @@ episode_key = sha256(上面六元组 + subject_digest + env_digest)
 
 `episode_key` 是幂等键：同一个 key 的 episode 无论被调度多少次，结果只入库一次。这使得"断点续跑"等价于"重新提交同一个 RunSpec，跳过已完成的 key"。
 
+为此 `run_id` 也由 RunSpec 决定：`run_id = name + "-" + sha256(规范化 RunSpec)[:12]`，规范化指补全默认值后按固定字段顺序编码，注释和字段顺序不影响结果。重新提交同一个 RunSpec 得到同一个 run，已取消的 run 也会被重新开放。要有意重跑同一配置（例如测 rerun spread，07 §5.2），改 `name` 即可。
+
+`subject_digest` 取 `subject.digest`，`env_digest` 取 `taskset.env_digest`（03 §4）。六元组和两个摘要按 JSON 数组编码后再哈希，避免字符串拼接带来的歧义。
+
 ### 3.3 Scheduler（拉模式 + 租约）
+- Worker 先 `Register` 上报垂类和并行度，响应中带租约时长 T；控制面只把同一垂类的 episode 租给它。
 - Worker 主动 `Lease(n)` 拉取最多 n 个 episode，获得 TTL 为 T 的租约。
 - Worker 每 T/3 发送一次 `Heartbeat` 续租。
 - 租约过期未续 → episode 回到待调度状态，attempt + 1。
-- attempt 超过上限 → 标记为 `infra_error`，**不计入成功率分母**，在报告中单列。
+- attempt 超过上限 → 标记为 `infra_error`（`error_kind = lease_exhausted`），**不计入成功率分母**，在报告中单列。
+- 已注册的 Worker 只保存在控制面内存里。控制面重启后，Worker 的下一次请求会收到 `FailedPrecondition`，随即重新注册；episode 状态全部在数据库中，不受影响。
 
 为什么用拉模式而不是推模式：Worker 的处理能力差异大（GPU 型号、并行环境数不同），拉模式天然按能力分配，控制面不需要感知 Worker 负载。
 
@@ -82,7 +89,7 @@ episode_key = sha256(上面六元组 + subject_digest + env_digest)
 ### 4.1 元数据（SQLite 起步，可切 Postgres）
 
 ```sql
-runs(run_id PK, spec_yaml, manifest_json, status, created_at)
+runs(run_id PK, name, vertical, spec_yaml, spec_json, manifest_json, status, created_at)
 episodes(episode_key PK, run_id, task_id, variant_id, init_state_id, seed, repeat_idx,
          status, attempt, lease_owner, lease_expire_at)
 results(episode_key PK, outcome, score, steps, duration_ms, cost_json,
@@ -90,7 +97,9 @@ results(episode_key PK, outcome, score, steps, duration_ms, cost_json,
 labels(episode_key, labeler, label, confidence, rationale, created_at)   -- 失败归因
 ```
 
-`status ∈ {pending, leased, done, infra_error}`；`outcome ∈ {success, failure, unknown}`；`unknown` 表示评分依据不足（10 §7.4），和 `infra_error` 一样不计入成功率分母。
+`runs.status ∈ {pending, running, done, cancelled}`；`vertical` 用于按 Worker 垂类分配 episode；`spec_json` 是补全默认值后的 RunSpec，随租约下发给 Worker。
+
+`episodes.status ∈ {pending, leased, done, infra_error}`；`attempt` 是租约过期次数；`outcome ∈ {success, failure, unknown}`；`unknown` 表示评分依据不足（10 §7.4），和 `infra_error` 一样不计入成功率分母。
 
 ### 4.2 制品
 

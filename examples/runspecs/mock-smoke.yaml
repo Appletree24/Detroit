@@ -1,0 +1,18 @@
+# M1 骨架的冒烟 RunSpec：synthetic 任务 + mock Worker，不需要模型和沙箱。
+# 修改 subject.digest 或 params.success_rate 即可得到另一个"模型"的 run，用于演示对比。
+name: mock-smoke
+subject:
+  adapter: mock
+  digest: mock@v1
+  params: { success_rate: 0.7 }
+taskset:
+  vertical: agent
+  source: synthetic
+  suites: [smoke]
+  variants: [base, tool_latency_2s]
+  init_states: all
+  seeds: [0]
+  repeats: 3
+  options: { tasks_per_suite: 20 }
+stats:
+  confidence: 0.95

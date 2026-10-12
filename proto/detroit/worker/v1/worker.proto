@@ -1,0 +1,22 @@
+syntax = "proto3";
+package detroit.worker.v1;
+
+option go_package = "github.com/Appletree24/Detroit/gen/detroit/worker/v1;workerv1";
+
+// Worker 协议：控制面 ↔ Worker（docs/04 §1）。
+service Scheduler {
+  rpc Register(RegisterReq) returns (RegisterResp);    // 上报能力：垂类、并行度、GPU
+  rpc Lease(LeaseReq) returns (LeaseResp);             // 拉取 episode
+  rpc Heartbeat(HeartbeatReq) returns (HeartbeatResp); // 续租；响应中可携带取消指令
+  rpc Report(EpisodeReport) returns (ReportAck);       // 上报结果（幂等）
+}
+
+message RegisterReq   { string worker_id = 1; string vertical = 2; int32 slots = 3; map<string, string> labels = 4; }
+message RegisterResp  { int64 lease_ttl_ms = 1; } // Worker 据此决定心跳间隔（TTL/3）
+message LeaseReq      { string worker_id = 1; int32 max = 2; }
+message LeaseResp     { repeated EpisodeLease leases = 1; }
+message EpisodeLease  { string episode_key = 1; bytes episode_json = 2; bytes run_spec_json = 3; int64 expire_unix_ms = 4; }
+message HeartbeatReq  { string worker_id = 1; repeated string episode_keys = 2; }
+message HeartbeatResp { repeated string cancelled = 1; int64 extend_to_unix_ms = 2; }
+message EpisodeReport { string episode_key = 1; bytes result_json = 2; string artifact_uri = 3; }
+message ReportAck     { bool accepted = 1; bool duplicate = 2; }

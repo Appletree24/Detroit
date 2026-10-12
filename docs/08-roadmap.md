@@ -4,15 +4,15 @@
 
 ## M1 内核 + Agent MVP（10/12 – 10/25）
 
-| 交付 | 验收标准 |
-|---|---|
-| 核心类型与 RunSpec 解析 | 03 中的类型全部落地，有单测 |
-| SQLite 元数据存储 + 本地制品存储 | episode upsert 幂等；kill -9 后重启续跑不重复、不丢失 |
-| 调度器（租约 + 心跳 + 重试） | 模拟 Worker 随机崩溃，所有 episode 最终完成或进入 infra_error |
-| `openai-compatible` Subject 适配器 | 能驱动一个工具调用 Agent 完成多步任务 |
-| Docker 沙箱 Worker（L1） | 从快照启动、导出终态、销毁；资源超限可判定 |
-| 确定性 Scorer + Wilson 区间 + Markdown 报告 | 报告中每个成功率都有 N 与 CI |
-| 一个 smoke 任务集（≥20 个任务） | 两个不同模型的端到端对比报告 |
+| 交付 | 验收标准 | 状态 |
+|---|---|---|
+| 核心类型与 RunSpec 解析 | 03 中的类型全部落地，有单测 | ✅ `internal/core` |
+| SQLite 元数据存储 + 本地制品存储 | episode upsert 幂等；kill -9 后重启续跑不重复、不丢失 | 元数据 ✅（`test/e2e` 验证 kill -9）；制品存储待做 |
+| 调度器（租约 + 心跳 + 重试） | 模拟 Worker 随机崩溃，所有 episode 最终完成或进入 infra_error | ✅ `internal/scheduler` |
+| `openai-compatible` Subject 适配器 | 能驱动一个工具调用 Agent 完成多步任务 | 待做 |
+| Docker 沙箱 Worker（L1） | 从快照启动、导出终态、销毁；资源超限可判定 | 沙箱 ✅（`workers/agent/sandbox`，真实 Docker 集成测试）；接入 Worker 待做 |
+| 确定性 Scorer + Wilson 区间 + Markdown 报告 | 报告中每个成功率都有 N 与 CI | Wilson 区间 ✅（`run status` 输出 N 与 CI）；Scorer、报告待做 |
+| 一个 smoke 任务集（≥20 个任务） | 两个不同模型的端到端对比报告 | 待做（目前只有 synthetic 占位任务） |
 
 ## M2 Agent 垂类完整化（10/26 – 11/01）
 

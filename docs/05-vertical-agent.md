@@ -29,6 +29,23 @@
 ### 2.3 资源限制
 CPU / 内存 / 磁盘 / 墙钟时间上限；超出视为 Agent 失败（`resource_exhausted`），而不是 infra_error——资源失控是 Agent 行为的一部分。
 
+### 2.4 实现（`workers/agent/sandbox`）
+
+沙箱是可替换的后端（`Provider` / `Sandbox` 接口），目前实现了 Docker，通过 docker CLI 调用，也可换成 Podman。配置字段对应 10 §6.3 的 `task.environment`。
+
+| 要求 | 做法 |
+|---|---|
+| 快照 | 镜像必须按 digest 固定；工作区是匿名卷，镜像中该路径已有的内容会带入，再复制种子目录，然后执行 `setup`。setup 完成时记录每个文件的 sha256 作为初始状态，墙钟时间从这时开始计 |
+| 隔离（L1） | `--network none`、只读根文件系统、工作区与 `/tmp`（tmpfs）可写、`--cap-drop ALL` 后只补回 CHOWN / DAC_OVERRIDE / FOWNER / FSETID / KILL / SETGID / SETUID、`no-new-privileges`、`--init` 回收孤儿进程。`network: host` 对应 Docker 默认 bridge 网络（能访问外网，但不是宿主网络）；`allowlist` 需要出口代理，尚未实现 |
+| L2 | 配置 `Runtime: runsc` 即用 gVisor，其余不变 |
+| 内存 / 进程数 | `--memory`（禁用 swap）、`--pids-limit` 硬限制；是否超限读容器内 cgroup v2 的 `memory.events` 的 `oom_kill` 与 `pids.events` 的 `max`。读不到（cgroup v1）时标记为未知，不按未超限处理 |
+| 磁盘 | 工作区总大小在 `Usage` / `Export` 时用 `du` 检查，属于事后判定；`/tmp` 是同样大小上限的 tmpfs |
+| 墙钟时间 | 沙箱自己计时；耗尽后正在执行的命令被终止，之后的命令不再执行。单条命令另有可选超时 |
+| 终止命令 | 结束 `docker exec` 客户端不会结束容器内的进程，所以每条命令都记录 pid，超时或取消时在容器内结束整棵进程树。已脱离父进程的守护进程不在树内，随 `Destroy` 一起结束 |
+| 导出终态 | 每个工作区一个 tar 包加相对初始状态的文件差异（新增 / 修改 / 删除）；`ExportCommands` 的输出（如数据库 dump）；资源使用情况。超限后仍可导出；Agent 占满进程数时，平台临时放宽上限读取，结束后恢复 |
+| 故障分类 | 镜像拉取、创建、启动、种子数据失败为 `sandbox_boot`，setup 失败为 `sandbox_setup`，运行中 Docker 出错为 `sandbox_error`，都按 infra_error 上报；启动失败不留下容器 |
+| 清理 | 容器带 `detroit.sandbox`、`detroit.owner` 标签，Worker 重启后按 owner 清理残留 |
+
 ## 3. 工具层与回放
 
 **问题**：Agent 评测中外部工具（搜索、第三方 API）返回不确定，导致结果不可复现，且调用成本高。

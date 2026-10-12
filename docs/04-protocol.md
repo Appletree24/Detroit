@@ -16,6 +16,7 @@ service Scheduler {
 }
 
 message RegisterReq  { string worker_id = 1; string vertical = 2; int32 slots = 3; map<string,string> labels = 4; }
+message RegisterResp { int64 lease_ttl_ms = 1; }   // Worker 据此每 TTL/3 发送一次心跳
 message LeaseReq     { string worker_id = 1; int32 max = 2; }
 message LeaseResp    { repeated EpisodeLease leases = 1; }
 message EpisodeLease { string episode_key = 1; bytes episode_json = 2; bytes run_spec_json = 3; int64 expire_unix_ms = 4; }
@@ -29,7 +30,10 @@ message ReportAck    { bool accepted = 1; bool duplicate = 2; }
 
 - `Report` 必须幂等：同一 `episode_key` 重复上报，返回 `duplicate=true`，不覆盖已有结果。
 - Worker 在租约过期后仍可能完成并上报（"僵尸完成"）。控制面接受第一个到达的结果；后到者标记 duplicate。
-- `Heartbeat` 响应中的 `cancelled` 用于用户取消 run 时让 Worker 尽快停止。
+- `Heartbeat` 响应中的 `cancelled` 用于用户取消 run 时让 Worker 尽快停止。被取消的 episode 不上报结果；它们的租约过期后回到待调度状态，run 重新开放后继续执行。
+- 心跳只为该 Worker 仍持有的租约续期；已过期并转给别的 Worker 的租约不会被续期。
+- `Lease`、`Heartbeat` 要求 Worker 已注册，否则返回 `FailedPrecondition`；`Report` 不要求，以便接受僵尸完成和控制面重启前执行完的结果。
+- `episode_json` 是 `Episode`（03 §2），`run_spec_json` 是补全默认值后的 RunSpec。`result_json` 是 `EpisodeResult`，其中 `key` 必须与 `episode_key` 一致。
 
 ## 2. Subject 协议
 
@@ -59,6 +63,7 @@ message SubjectInfo {
   bool stateful = 6;
 }
 
+message ResetReq { string session_id = 1; string task_id = 2; int64 seed = 3; }
 message ActReq  { string session_id = 1; bytes observation = 2; }   // observation 为 msgpack 编码
 message ActResp { bytes actions = 1; map<string,string> debug = 2; }  // actions: H×D 数组或工具调用 JSON
 message ActBatchReq  { repeated ActReq items = 1; }
