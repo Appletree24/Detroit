@@ -1,9 +1,10 @@
 # 10 评测集格式协议
 
-> 版本 v2 草案，2026-10-12。状态：**待审阅**。
+> 版本 v2 草案，2026-10-12；语义复核更新于 2026-10-15。状态：**待审阅**。
 > 已确认的决定：协议由 Detroit 定义和维护；评分定义可以和题目分开分发（见 09 D10、D11）；§13 中 4 个问题的处理方式。其余内容是设计建议，实现前需要再审阅。
 > 机器可读的定义见 [`schemas/detroit-v2.schema.json`](../schemas/detroit-v2.schema.json)（JSON Schema 2020-12）。它只覆盖结构；摘要、引文核对等跨字段检查见 §10。
-> 示例见 [`examples/datasets/v2/`](../examples/datasets/v2/)：`casepick-inline` 是一道对话续写题，带内联默认评分和一份单独分发的宽松版评分；`swe-bench-bundle` 是任务级题目的 bundle（示意数据，不是上游原文）。示例都通过了 Schema 校验，摘要按 §4 计算。
+> 示例见 [`examples/datasets/v2/`](../examples/datasets/v2/)：`casepick-inline` 是一道对话续写题，带内联默认评分和一份单独分发的宽松版评分；`swe-bench-bundle` 是任务级题目的 bundle（示意数据，不是上游原文）。示例用于结构和摘要核对，不证明可执行、可忠实评分或已经接入公开 benchmark。
+> 当前 Go 内核仅注册 synthetic TaskSet Loader；v2 Go 导入器、真实 Subject 与 Worker 的执行评分闭环尚未实现。本文新增的内部可用性状态和后续字段建议不等于现有 Schema 或 CLI 已支持。
 
 ## 1. 目的与范围
 
@@ -17,9 +18,11 @@
 | 用户自建评测集 | 给定指令和沙箱，Agent 多步执行，按终态判定 | 05 §7 评测集构建器的产出 |
 | 公开 benchmark | 由 loader 从上游按固定版本转换 | Terminal-Bench、SWE-bench 系列 |
 
-不在本文范围：怎么跑（RunSpec、Variant、seed、repeat，见 03 §4）、跑出的结果（EpisodeResult、Label）、Judge 用哪个模型和提示词（属于 Scorer 版本，见 07 §3.4）。
+不在本文范围：怎么跑（RunSpec、Variant、seed、repeat，见 03 §4）、跑出的结果（EpisodeResult、Label）、Judge 用哪个模型和提示词（属于 Scorer 版本，见 07 §3 第 4 项）。
 
-具身垂类暂不定义 `task` 的具体形态，但信封、评分、评测集三部分与垂类无关，具身以后只需新增 `task.kind`（§12）。
+项目继续保留 Agent 与具身两个垂类的目标。当前 Schema 只接受 `task.kind: agent`；具身任务形态和所需环境、观测、动作及评分扩展另行定义，不能仅新增一个字符串就视为已获得兼容支持。
+
+生产方负责提供任务包，TaskSet Loader 负责取得、转换和校验数据；Worker 负责运行环境及 episode，Subject 是被测对象，Scorer 执行判定。生产方插件不是 Subject 适配器；导入器不执行工具、项目准备或评分。轻量对话 Worker 与环境型 Worker 共用调度协议，但按 horizon 和能力选择执行方式。
 
 ## 2. 设计原则
 
@@ -28,7 +31,7 @@
 3. **能确定就不用模型判**（05 §5）。确定性检查和 rubric 并存；rubric 是确定性检查覆盖不了时的主要依据，不是次品。
 4. **如实声明缺失。** 拿不到的系统提示、近似的工具定义、无法恢复的环境，都写进 `limitations`，不假装完整。
 5. **交换格式不含平台内部状态。** 导入批准、平台分配的 ID、本机路径不进协议；平台在导入时自行生成。
-6. **严格校验，但留扩展点。** 未知字段一律拒绝，只有 `extensions` 下的 `x-*` 键例外：平台必须原样保留，可以忽略。
+6. **严格校验，但留扩展点。** 以当前 Schema 的具体分支为准：已定义结构拒绝未知字段；`extensions` 下的 `x-*` 键原样保留，未登记检查类型使用 §7.3 的显式兼容分支。不能把影响任务执行或判定的必要语义藏进可忽略扩展；必要扩展的协商机制仍待定义。
 
 ## 3. 三种文档
 
@@ -56,7 +59,12 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 | 摘要 | 覆盖范围 | 不覆盖 |
 | --- | --- | --- |
 | `digests.task` | `task` 整个对象 | 标题、`meta`、`diagnostic`、`provenance`、`scoring`、`extensions` |
-| `digests.scoring` | 评分文档去掉 `id`、`revision`、`label`、`target`、`producer`、`extensions` 后的内容；内联评分取 `case.scoring` 同样的子集 | — |
+| `digests.scoring` | 正向选取 `combine`、`requirements` 及存在时的 `materials`，组成评分主体后计算摘要；内联与独立文档采用同一投影 | `schema`、`schema_minor`、`id`、`revision`、`label`、`target`、`producer`、`digests`、`extensions` |
+| `digests.dataset` | 正向选取 `entries`、`purpose`，组成对象后计算摘要 | 其余字段 |
+
+摘要必须在补运行默认值、转换或装配前，针对输入文档计算。保留数组顺序；缺省字段不补齐，`materials` 缺省与显式空数组是不同输入。`digests.scoring` 绝不包含摘要字段自身，独立文档和内联形式具有相同评分主体时得到相同摘要。协议解释版本、实际 Scorer 版本及配置另外固定在运行清单中，数据摘要不能代替实现版本。
+
+现有示例中的题目和三份评分摘要已按上述投影只读重算并匹配。完整导入实现还需提供 JCS 跨语言测试向量，覆盖 Unicode、数字、转义与非法输入；本次样例核对不等于已经验证完整 JCS 实现。
 
 所以：改标题、补诊断信息、更新来源说明，都不会让题目"变成新题"；改了 `task` 里的任何内容，所有绑定它的评分都会失效（§7.2）。
 
@@ -133,11 +141,13 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 | `image` | `{ "ref": "python:3.11", "digest": "sha256:…" }`，或 `{ "build": { "dockerfile": blob, "context": blob } }` |
 | `workspaces` | `[{ "id", "path", "repo"?, "commit"?, "snapshot"?: blob }]`：代码仓库按提交固定，或给出目录快照 |
 | `setup` | 进入初始状态前在沙箱内执行的命令列表；导入时**不执行** |
-| `network` | `none` \| `allowlist` \| `host`，默认 `none` |
+| `network` | `none` \| `allowlist` \| `host`，默认 `none`；当前 Docker 后端把 `host` 实现为可联网的 bridge，并非宿主网络命名空间。运行清单必须记录实际网络模式；`allowlist` 尚未实现，不可静默改为开放网络 |
 | `credentials` | 需要的能力名称，如 `["github_read"]`；**只写名称，不写值** |
 | `resources` | `{ "cpu"?, "memory_mb"?, "disk_mb"?, "timeout_s"? }` |
 
-`kind: unavailable` 的题目只能用 `horizon: next_message`。平台导入时允许保存，但如果它要求执行工具，运行前会阻止。
+`kind: unavailable` 的题目可以保存；当前 Schema 并未禁止它与 `episode` 同时出现。需要环境执行的 episode 在运行前阻塞，不能自动改成 next_message 来绕过缺失起点。next_message 不执行工具，可按已声明的输入局限运行，并按 §13 的完整度维度分组。
+
+Schema 接受镜像标签或构建说明，不代表已冻结环境。派发前需解析并记录镜像 digest、仓库 commit、快照内容和准备步骤实际结果；未能取得所需内容时不能派发。镜像构建、repo 拉取、网络 allowlist、多容器和凭据装配均须由执行后端声明支持，不能根据字段存在推断实现能力。
 
 ### 6.4 `diagnostic`
 
@@ -151,7 +161,7 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 | `labels` | 原失败的归因标签：`[{ "taxonomy": "agent_failures@1", "label": "policy_violation", "primary"?: true }]`，对应 05 §6 |
 | `notes` | 自由文本 |
 
-`observed` 加上 `violates`，本身就是一条人工确认过的"违反"样本，可以直接进入 07 §3 的 Judge 人工标注集（§7.5）。
+`observed` 加上 `violates` 表达生产方声明的原输出及违反项，结构本身不证明经过人工确认。只有另有可审阅的人工判定记录时，才可作为 07 §3 的 Judge 人工标注样本；否则作为待复核的诊断材料保存。
 
 ### 6.5 `provenance`
 
@@ -216,9 +226,9 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 
 - **阶段**由类型决定：离线检查只读制品，对应 03 `OfflineScorer`，可以随时重跑；在线检查要访问终态环境，对应 `OnlineScorer`，在 Worker 内执行。
 - **作用对象**：离线检查默认看最终的文字输出；`tool_*` 看全部工具调用；可以用 `scope: "final_text" | "all_text" | "tool_calls"` 覆盖。
-- **`command` 的退出码**：在 `pass_exit_codes` 里算通过，在 `error_exit_codes` 里算**评分器故障**，其他算失败。不能把所有非零退出码都当成任务失败。
+- **`command` 的退出码**：命令已正常启动并完成时，在 `pass_exit_codes` 里算通过，在 `error_exit_codes` 里算**评分器故障**，其余退出码按冻结的命令契约判失败；两个集合不得重叠。启动失败、评分器超时、结果截断或协议错误另记评分故障，不能先当作普通退出码处理。
 - **`tests`** 覆盖 SWE-bench 的 FAIL_TO_PASS（`must_pass`）和 PASS_TO_PASS（`must_still_pass`）。
-- **未知类型**：平台遇到不认识的检查类型时，导入给出警告；运行时这条要求判 `unknown`，不判失败。
+- **未知类型**：Schema 的 `check` 分支允许保存未登记的检查类型；导入给出警告，运行时该要求判 `unknown`，不判失败。正式运行前列出不支持的检查及预计影响，按已冻结的评分组合和 §13 有效性规则处理；不得静默删除要求、声称完整评分或修改已确认的统计口径。
 - 新增类型属于小版本升级（§11）。
 
 ### 7.4 判定与组合
@@ -239,10 +249,14 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 { "rule": "required_then_threshold", "threshold": 0.6 }
 ```
 
-- 任一必过条件 `fail` → 整题 `fail`，不管其他结果。
-- 所有必过条件都 `pass`，并且加分项加权得分达到 `threshold`（没有加分项或没写 `threshold` 时跳过）→ 整题 `pass`。
-- 其余情况 → 整题 `unknown`。`unknown` 不能当作失败计入成功率，也不能悄悄从分母里去掉；在统计和报告中的处理见 §13 第 1 条。
-- 加分项里的 `unknown` 不补零，加权得分只按已知项计算，同时报告覆盖比例。
+- 任一必过条件 `fail` → 整题 `fail`，其余未完成项和故障仍保留。
+- 所有必过条件均为 `pass`，且启用的加权门槛所依赖的分项全部已知时，得分达到 `threshold` → `pass`，低于门槛 → `fail`。不能把已知不达标归为 `unknown`。
+- 未启用加权门槛时（没有加分项或没写 `threshold`），仅按必过条件判定；加分项只作分析。没有任何必过条件且未启用有效门槛时，判定契约为空，运行前拒绝该评分规格，不能自动通过。
+- 仍有影响结论的未知项或评分故障时，整题为 `unknown`；仅分析分项未完成不改变已成立的整题结论。评分故障另记状态与原因，不用 `fail` 代替，也不掩盖其他已知分项。
+- 加分项通过记 1、失败记 0，按固定的非负权重计算；启用门槛时其权重总和必须大于零。任一参与加权门槛的分项未知时，综合分暂不定义，不能移除它的权重后判整题通过。报告可显示已知分项及按权重计算的判定覆盖率，但覆盖率不是成功率。
+- `unknown` 的统计继续遵循 §13 第 1 条：不计入条件成功率分母，单列数量与比例并检查有效性阈值；这不授权在单题评分组合中删除未知分项的权重。
+
+评分流程状态与整题判定分别保存；每份评分按自己的内容摘要、Scorer 实现版本、配置与证据引用生成结果。具体结果存储协议由 03 / 04 定义，当前交换 Schema 没有这些运行结果字段。
 
 ### 7.5 rubric
 
@@ -263,7 +277,7 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
 4. 二元判定，拿不准的情况写进 `edge_cases`。
 5. 不惩罚和这条要求无关的差异。
 
-**`origin: observed` 的例子**是从原失败输出中截取的真实片段，并且由人确认过判定。平台用它做两件事：
+**`origin: observed` 的例子**表示来自原输出的真实片段；它本身不是人工签认字段。经核对且有人工判定记录的样例可用于校准。平台分别处理：
 
 - **导入检查**：如果题目带了 `diagnostic.observed`，这些片段必须能在其中找到原文。
 - **Judge 校准**：可以导出为 07 §3 的人工标注样本。这是 rubric 的独立校验：Judge 对这些已知 `fail` 的片段判 `pass`，说明 Judge 或 rubric 有问题。
@@ -302,11 +316,12 @@ Judge 用哪个模型、什么提示词，不属于本协议，由 RunSpec 中�
 | `entries` | 是 | `[{ "case": { "id", "revision", "task_digest" }, "scoring": [{ "id"?, "revision"?, "digest" }], "weight"?, "suite"? }]` |
 | `digests` | 是 | `{ "dataset" }`：`entries` 和 `purpose` 的摘要，作为评测集版本号（05 §7 第 6 步） |
 
-- `scoring` 列出这道题在本评测集里使用的评分。只有一份时直接使用；有多份时，RunSpec 必须指定用哪一份，或者全部评一遍、分别报告。不同评分的结果不混在一起统计（07 §3.4）。
+- `scoring` 列出这道题在本评测集里使用的评分。`scorers.select` 默认为 `all`，也可以指定 label；解析后冻结具体摘要；为同一道题选择 label 时，匹配缺失或不唯一须给出明确错误。同题不同评分分别报告，不事后选最高分。不同题可有各自适用的评分，报告固定“题目版本 → 评分版本”的映射后按统一口径汇总。
 - 内联评分用 `{ "digest": case.digests.scoring }` 引用，不需要 `id`。
 - 尚无评分的题目可以导入，条目的 `scoring: []` 表示待补评分。
 - 导入时若拒绝某份评分，平台移除该评分的引用并生成新的有效评测集摘要，在导入结果中明确报告；原始交换文件保持不变。
 - 同一个 `group_key` 的题目，在统计上作为相关样本处理，不当作互相独立的题。
+- 来源组已用于改进时，相关题不能仅靠修改 purpose、换 ID 或确认提示继续作为未暴露的独立验证证据。可改为改进用途后导入，或保留为待处理材料；用途变更和历史报告的用途快照由平台记录。来源组键缺失不能被当作独立性的证明。
 
 ## 9. 打包
 
@@ -332,11 +347,11 @@ dataset.json         可选：没有时平台按导入批次生成
 
 上限：单个 JSON 文档 16 MiB，单个 blob 256 MiB，单个 bundle 总计 4 GiB。超出时用 `environment.image` 或 `workspaces[].repo` + `commit` 引用，不内联。
 
-**公开 benchmark 不重新分发。** loader 按 `source.benchmark.version` 从上游拉取并转换成本格式，只在本地存储。这样做避免许可证问题，也保证和上游内容一致（D7）。
+**公开 benchmark 默认按固定版本在本地取得并转换。** loader 记录上游来源、版本、许可信息、原始内容摘要与转换器版本；本地使用仍需符合来源的使用条件。转换后是否保留原始任务和验收语义须单独验证，不能仅凭本地存储或固定版本宣称与公开结果一致（D7）。
 
 ## 10. 导入检查
 
-平台导入时必须做以下检查。前四类不通过就拒绝导入，后两类只给警告：
+目标导入器须按下表分别处理文档、评分引用和用途冲突。此表是待实现的语义验证要求；Schema 校验本身不能完成摘要、引文、引用完整性及执行能力检查：
 
 | 检查 | 不通过时 |
 | --- | --- |
@@ -349,19 +364,32 @@ dataset.json         可选：没有时平台按导入批次生成
 | `horizon` 和检查类型冲突（比如 `next_message` 用了 `command`） | 拒绝该要求所在的评分 |
 | 出现未知检查类型 | 警告；运行时该要求判 `unknown` |
 | `environment.kind: unavailable` | 警告；运行前阻止需要执行工具的题目 |
-| 验证集中出现 `improvement` 来源或共享 `group_key` | 警告，并要求在评测集上显式确认 |
+| 验证集中出现 `improvement` 来源或共享 `group_key` | 阻止作为独立验证集发布或运行；可保留待处理导入，或显式改为改进用途，确认不能豁免已发生的暴露 |
+
+### 10.1 导入、执行与重评分的不同条件
+
+平台内部应分别记录以下检查结果，不新增为当前 v2 交换文档字段：
+
+| 层次 | 可用条件 |
+| --- | --- |
+| 可导入 | 结构和引用可验证，原始材料可保存；不执行镜像构建、setup、工具或评分。局限明确的题仍可保留 |
+| 可执行 | 题目内容与选定评分已冻结，Worker / Subject 支持 horizon 和输入输出，环境及必需材料能够准备；未知检查按上表保留并提示，不假装支持 |
+| 可重评分 | 指定 Scorer 所需的输出、工具调用、文件或终态导出已经保存且完整。已有材料不足时返回所缺证据及受影响要求，不自动重跑 Subject |
+
+离线评分只读制品；在线评分依赖环境状态。需要在线状态的规则只有在已保存可恢复快照或等价导出时，才能在受控评分环境中重评。平台应冻结运行实际使用的题目、blob、初始状态、评分、解析器和环境版本；Worker 按内容引用取回，不能在运行中重新加载可变来源后仍沿用原 episode 身份。当前 Go 的任务摘要写入 manifest、Worker 再次调用 Loader 的路径尚需实现这一约束。
 
 ## 11. 版本规则
 
-- `schema` 里的主版本（`v2`）变化表示不兼容。v2 内部的新增都必须兼容：新增可选字段、新增检查类型、新增 `task.kind`。
-- 文档里可以写 `schema_minor`（整数，默认 0），表示用到了哪个小版本的特性。平台遇到比自己新的小版本时仍然尝试导入，不认识的部分按 §7.3 和 §10 处理。
-- 检查类型登记表随小版本更新，记录在本文 §7.3。
+- `schema` 的主版本用于标识不兼容语义；`schema_minor` 标识文档依赖的小版本特性，缺省为 0。
+- 严格 Schema 的旧读取器会拒绝未知结构字段或新的 `task.kind`，即使字段被生产方称为“可选”。不能承诺任意小版本都可被旧读取器无损接收；生产方应协商读取器版本或使用显式转换层，无法理解的必要语义不能静默丢弃。
+- 当前已定义的前向兼容渠道只有 `extensions` 的 `x-*` 键，以及未登记检查类型的保存与 `unknown` 处理。兼容新增必须说明旧读取器的确定行为；其他字段或语义变化需升级 Schema、兼容矩阵和测试后发布。
+- 检查类型登记表随版本更新，记录在 §7.3；新类型在尚不支持的读取器中仍按未知检查处理。
 
 ## 12. 从各来源映射
 
 ### 12.1 CasePick
 
-CasePick 的内部记录和导出都直接使用本格式，私有信息放在 `extensions["x-casepick"]`。
+目标约定是 CasePick 等生产方直接输出本格式，私有信息放在 `extensions["x-casepick"]`；具体生产方是否已实现、支持哪些协议版本，需由实际接口和样例验证，不能由本映射表推断。
 
 | 本协议 | 取值 |
 | --- | --- |
@@ -383,7 +411,7 @@ CasePick 的内部记录和导出都直接使用本格式，私有信息放在 `
 | `task.instruction` | `problem_statement` |
 | `task.environment` | 官方评测镜像；`workspaces: [{ "repo", "commit": base_commit }]` |
 | `task.tools.source` | `environment` |
-| `scoring.requirements` | 一条必过要求，`checks: [{ "type": "tests", "must_pass": FAIL_TO_PASS, "must_still_pass": PASS_TO_PASS }]` |
+| `scoring.requirements` | 一条必过要求；`tests` 检查由锁定版本的验证入口填入 `run`、`report`、`must_pass: FAIL_TO_PASS`、`must_still_pass: PASS_TO_PASS`，不省略 Schema 必填参数 |
 | `scoring.materials` | `test_patch`（评分侧，被测对象不可见） |
 | `diagnostic` | 不填；参考补丁 `patch` 不进入任何被测对象可见的位置 |
 | `provenance.source.benchmark` | `{ "name": "swe-bench-verified", "version", "instance_id" }` |
@@ -397,22 +425,30 @@ CasePick 的内部记录和导出都直接使用本格式，私有信息放在 `
 | `task.environment` | 任务目录中的 Dockerfile 构建为 `image.build` |
 | `task.tools.source` | `environment`（终端） |
 | `task.max_steps`、`environment.resources.timeout_s` | 取自任务配置 |
-| `scoring.requirements` | 一条必过要求，`checks: [{ "type": "tests", "run": "bash run-tests.sh", "report": "pytest-json" }]` |
+| `scoring.requirements` | 根据锁定版本的实际验证入口、结果格式和通过语义生成检查；选择 `tests` 时必须提供 `run`、`must_pass`、`report`，不能假定所有版本都使用同一脚本名或 pytest-json |
 | `scoring.materials` | 任务的 `tests/` 目录（评分侧） |
+
+SWE / Terminal-Bench 的表格只说明字段映射方向，尚不是某版本的兼容承诺。适配实现须固定上游版本、子集、转换器、镜像与测试解析器，并验证隐藏材料不进入 Subject、终态恢复与判分符合上游语义。`report: exit_code` 只提供进程级退出状态，不能独自证明 FAIL_TO_PASS / PASS_TO_PASS 各测试身份与结果；需要逐测试证据或经验证的权威汇总契约。
+
+当前 SWE 示例含镜像标签 `latest`、`<base_commit>`、`<pinned>` 和示意测试内容，仍只用于结构展示；在替换为可验证输入和评分证据之前不能作为运行或公开成绩复现样例。
 
 ### 12.4 旧格式迁移
 
 | 旧格式 | 迁移方式 |
 | --- | --- |
-| `detroit.case/v1`（M1 导入清单） | `instruction` → `task.instruction`；`materials[role=input]` → `task.materials`，`role=scoring` → `scoring.materials`，`role=diagnostic` → `diagnostic`（作为 blob）；`acceptance.description` → 一条只有 rubric 的必过要求，`question` 需要人补；`source.usedForImprovement` → `provenance.purpose`；`missing` → `provenance.limitations`；`approvalDigest`、`sourcePath`、平台 `groupId` 丢弃 |
-| `casepick.case/v1` | 见 12.1；`quality` / `judge_mode` 丢弃（可以从有没有 `checks` 推出来）；单一 `hash` 拆成 `digests.task` 和 `digests.scoring` |
+| 原 TS M1 清单（`kind: detroit.case`、`schemaVersion: 1`，并非 `schema: detroit.case/v1`） | 通过显式迁移器识别；保留原包和转换记录。`instruction`、起点、输出与材料角色分别映射；验收描述只作为待补评分依据，不能自动变成有效 rubric；缺失项转为 limitations 并保留具体材料状态。平台本地路径和批准状态不写入交换包，来源组关联在平台内部迁移 |
+| `casepick.case/v1` | 在取得该版本真实定义和样例后建立映射；无法证明等价的 `quality` / `judge_mode` 等私有信息原样保留为扩展或迁移证据，不从 checks 的存在与否推断；按实际任务和评分主体分别重算摘要 |
+
+旧 M1 多工作区材料的 `workspaceId`、`required`、`state: missing/deleted` 没有当前 v2 material 的直接对应字段，不能扁平化后丢失含义。一般诊断附件也不能强行包装成 `diagnostic.observed.trajectory`。转换器须保留原始字节、工作区归属、缺失／删除语义及诊断角色；在补齐映射之前仅保存迁移草稿和局限，不宣称可执行。
+
+`acceptance.description` 不能自动补出 rubric 的 `question/pass/fail`；缺少这些字段时不生成有效评分文档。`usedForImprovement: true` 映射为 improvement；false 仅表示旧布尔字段未标记，需结合可核对的来源用途记录才能声明 validation。原平台 `groupId` 不直接成为通用交换 ID，但其同源关系必须保留为稳定、带命名空间的 group_key 或平台迁移映射，不能因字段不出包而丢失污染检查依据。
 
 ## 13. 已处理的问题
 
 起草时列出的 4 个问题，2026-10-12 用户同意按建议处理，已同步到相关文档：
 
 1. **`unknown` 在统计中怎么处理。** 新增 `Outcome = Unknown`：不计入成功率分母，也不算失败；和 `infra_error` 一样单列展示比例，超过阈值（默认 10%）时整次 run 标为无效。见 02 §4.1、03 `EpisodeResult` / `Aggregate`、07 §1、§6。
-2. **`next_message` 题在 Worker 里怎么跑。** 由轻量的对话 Worker 执行，不启动沙箱，工具调用只记录不执行。见 02 §3.5。
+2. **`next_message` 题在 Worker 里怎么跑。** 由轻量的对话 Worker 执行，不启动沙箱，工具调用只记录不执行。见 02 §3.6。
 3. **工具定义近似的题目能不能和其他题混在一起比较。** 不阻止混用；报告按 `task.tools.source` 和 `task.system.status` 分组展示。见 07 §6 第 7 项。
 4. **一道题挂多份评分时 RunSpec 怎么写。** `scorers.select: all` 或某个评分的 `label`；默认 `all`，不同评分的结果分别报告。见 03 §4。
 

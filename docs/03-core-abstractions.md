@@ -1,6 +1,8 @@
 # 03 核心抽象
 
-本文定义 Detroit 的全部核心类型。所有垂类只能通过这些抽象与内核交互。
+> 本文保留 Go 内核的 Task / Subject / Variant / Episode 语义。基础结构已在 internal/core 中实现；下文离线评分、具身配置等仍有目标内容。新增版本与执行身份见 §5，实际可用能力以 [README](../README.md) 为准。
+
+本文定义 Detroit 的核心契约与扩展方向。所有垂类通过这些抽象与内核交互；代码片段是接口说明，不代表每个类型及其调用链均已落地。
 
 ## 1. 类型关系
 
@@ -143,17 +145,21 @@ type Aggregate struct {
 
 ## 3. 垂类需要实现的扩展点
 
+下表是目标组织方式；当前已存在 workers/agent/sandbox 与 internal/taskset，Subject、taxonomy 和真实评分模块仍待实现。
+
 | 扩展点 | 位置 | 说明 |
 |---|---|---|
 | Env Worker | `workers/<vertical>/` | 实现 Worker 协议：重置、步进、在线评分、录制 |
 | Subject Adapter | `subjects/<name>/` | 把具体模型封装成 Subject 协议 |
-| TaskSet Loader | `verticals/<vertical>/tasks` | 从 benchmark 或用户数据加载 Task / Variant / InitState |
-| Failure Taxonomy | `verticals/<vertical>/taxonomy.yaml` | 该垂类的失败分类体系 |
-| Offline Scorers | `verticals/<vertical>/scorers` | Judge 提示词与解析逻辑 |
+| TaskSet Loader | `internal/taskset/` 及各来源实现 | 从 benchmark 或用户数据加载并冻结 Task / Variant / InitState |
+| Failure Taxonomy | 各垂类的版本化配置 | 该垂类的失败分类体系，不强制新增统一 verticals 目录 |
+| Offline Scorers | 独立评分模块及垂类适配 | Judge 提示词与解析逻辑，共享机制与领域配置分离 |
 
-TaskSet Loader 的接口是 `Load(ctx, TaskSetSpec) → []TaskEntry`，每项是一个 `Task` 和它的全部 `InitState`。控制面用它展开 episode；Worker 用同一个 Loader 根据 `task_id` 取回任务内容，所以租约里只需下发 `Episode` 本身。内置一个 `synthetic` 来源，按参数生成占位任务，供 mock Worker 和测试使用。
+TaskSet Loader 的接口是 `Load(ctx, TaskSetSpec) → []TaskEntry`，每项是一个 `Task` 和它的全部 `InitState`。当前控制面用它展开 episode，Mock Worker 再运行同一 Loader 按 `task_id` 取内容。这不能保证可变来源内容相同；目标在控制面冻结任务和初态摘要，租约携带冻结引用，Worker 取包并校验，不再次解析可变来源。内置一个 `synthetic` 来源，按参数生成占位任务，供 mock Worker 和测试使用。
 
 ## 4. RunSpec 示例
+
+以下展示目标配置语义；当前注册表没有 libero/openpi 实现，scorers.offline、select 和 stats.compare_to 的可解析性也不表示已经执行评分选择或比较。
 
 展开规则：`episodes = tasks × variants × init_states × seeds × repeats`，顺序确定。字段的默认值：`variants: [base]`、`init_states: all`、`seeds: [0]`、`repeats: 1`、`scorers.select: all`、`stats.confidence: 0.95`。未知字段一律拒绝。
 
@@ -172,7 +178,7 @@ taskset:
   init_states: all          # 每个任务的全部固定初始状态；也可以写正整数 N（前 N 个）或一组 ID
   seeds: [0]                # 默认 [0]
   repeats: 1
-  env_digest: libero@1.0    # 环境的不可变标识（镜像 digest、benchmark 版本），参与 episode_key
+  env_digest: sha256:<resolved-environment-digest>  # 示意占位，须替换为冻结环境内容摘要
   options: {}               # 交给 TaskSet Loader 的来源特定参数
 scorers:
   offline: [vlm_failure_judge@v1]
@@ -181,3 +187,24 @@ stats:
   confidence: 0.95
   compare_to: run_2026_10_20_baseline   # 可选：与基线配对比较
 ```
+
+## 5. 身份、版本与结果的目标演进
+
+| 对象 | 身份及不变量 |
+| --- | --- |
+| FrozenTask / InitState | 保存实际内容及摘要、loader 和来源版本；不能仅凭 ID 重取最新内容 |
+| ExecutionPlan | 固定任务清单、Subject、Variant、初态、seeds、采样、环境与预算；包含加载后的内容摘要 |
+| Run | 一次实验实例；submission_key 的幂等重传、新实验、显式继续分别定义 |
+| Episode | 计划中的一次逻辑样本；独立重复由 repeat_idx 表达 |
+| Attempt | 一次真实执行及租约代次，保存 worker incarnation、开始/停止/清理状态、成本和迟到原因 |
+| ExecutionResult | 不可变执行证据与产物引用，不能被较晚或较快的结果覆盖 |
+| Evaluation | 按 task_digest、scoring_digest、证据与评分器版本关联的一次评分 |
+| ReportSpec | 固定样本选择、每题评分映射、条件成功率口径、权重、阈值与统计方法 |
+
+上述目标结构尚未写入当前 proto / SQLite。当前 episodes.attempt 是租约过期计数，results 按 episode_key 唯一；不得称为已有完整 Attempt 历史。
+
+Outcome 与执行 Status 继续正交，但目标允许对停止后的有效产物独立评分。评分器运行错误、unknown 判定和任务失败分别保留；scorers.select: all 展开 Evaluation，不增加 Episode 数。请求参数、生效参数与实际观测分开，费用未知不能用数值零代替。
+
+Aggregate 目标补充 planned / pending / judged / unknown / infra_error / validity，以及带 method / confidence / defined 的 interval。当前 ci95 字段名不能表达任意 StatsSpec.Confidence，迁移时需明确旧字段兼容；N=0 时目标 rate 为未定义。完整统计约定见 [07](07-methodology.md)。
+
+Variant 仅表示受控扰动；不同模型或 Harness 由 Subject 配置及跨 Run 的 ComparisonSpec 对齐，不能沿用旧 TS 分支的 variant=model 语义。

@@ -1,42 +1,39 @@
 # Detroit
 
-> 一个统一的智能体评测框架：同一套评测内核，同时评测 **LLM Agent** 与 **具身策略（VLA / 机器人操作策略）**。
->
-> 名字取自 *Detroit: Become Human* —— 在把仿生人放进真实世界之前，先确认它到底能做什么、在哪里会失败。
+Detroit 是以 **Go** 构建的统一智能体评测框架，目标是让 **LLM Agent** 与 **具身策略（VLA / 机器人操作策略）** 共用任务编排、结果存储、统计比较和证据追溯内核，通过 Worker 与 Subject 适配不同执行环境和被测对象。
 
-## 为什么需要它
+当前已实现控制面、租约调度、SQLite 持久化、Go Worker 运行时、Synthetic + Mock 验证闭环，以及独立的 Docker 沙箱组件。真实 Agent / 具身评测链路仍在建设中。本文描述当前代码；优化目标与实现顺序见 [DESIGN.md](DESIGN.md) 和 [路线图](docs/08-roadmap.md)。
 
-不论被测对象是"调用工具的 LLM Agent"还是"输出关节动作的机器人策略"，评测本质上是同一个循环：
+## 当前实现
 
-```
-Env 给观测 ──▶ Subject(被测对象) 给动作 ──▶ Env 推进一步 ──▶ … ──▶ Scorer 打分
-                                                               │
-                                       Aggregator 统计聚合 ◀────┘
-                                               │
-                                       Analyzer 失败归因 ──▶ Report
-```
+| 模块 | 已实现能力 | 入口 |
+|---|---|---|
+| 核心契约 | RunSpec 解析、默认值与校验；Task、Episode、Outcome；配置摘要与 episode 幂等键 | `internal/core/` |
+| 任务展开 | TaskSet Loader 注册表；内置 Synthetic；任务 × 变体 × 初始状态 × seed × repeats 展开和任务集摘要 | `internal/taskset/`、`internal/scheduler/plan.go` |
+| 调度服务 | gRPC 注册、拉取、心跳、结果上报；按垂类分配、过期租约回收、有限次重派、取消与重提续跑 | `internal/scheduler/` |
+| 持久化 | SQLite WAL、短事务；run / episode / result 状态；重复结果不覆盖；重启后读取原记录 | `internal/store/` |
+| Worker 运行时 | 注册与重新注册、并行槽位、心跳、执行取消、结果上报重试；Mock Executor 可模拟未知和崩溃 | `internal/workerkit/` |
+| API 与 CLI | 提交、列表、进度汇总、取消；CLI 可启动 Mock Worker | `internal/api/`、`cmd/` |
+| 统计 | 总体和按 variant 汇总；已判定样本条件成功率、Wilson 区间；unknown / infra_error 单列 | `internal/stats/`、`internal/store/query.go` |
+| Agent 沙箱组件 | Docker 镜像启动、多工作区、setup、命令执行、资源限制、终态导出与销毁；可配置 `runsc` | `workers/agent/sandbox/` |
+| 协议与数据格式 | Worker / Subject protobuf 与 Go 生成代码；评测集 v2 JSON Schema 和示例 | `proto/`、`gen/`、`schemas/`、`examples/` |
 
-两类评测在业界各自有成熟工具，但普遍存在三个工程问题：
+## 当前边界
 
-1. **结论不可信**：很多结果只有一个点估计，没有置信区间；10 个 episode 的结论被当作事实。
-2. **结果不可复现**：模型版本、环境版本、seed、配置没有被完整锁定，换台机器分数就变。
-3. **只知道分数，不知道为什么**：成功率掉了 5 个点，却说不清是哪类失败变多了。
+- CLI 的执行入口目前只有 `worker mock`，使用 `synthetic` 任务；它不调用模型、不启动 Docker、不执行仿真。Subject protobuf 已定义，真实 Subject 服务、Agent 工具循环、LIBERO / LeRobot Worker 尚未接入。
+- Docker 沙箱是独立组件，尚未接通“任务包导入 → 真实 Worker → 评分”的链路。`Runtime: "runsc"` 是可选后端配置，不表示已验证 gVisor 环境。网络配置值 `host` 当前映射 Docker bridge 外网访问，不是宿主机网络模式。
+- 评测集 v2 Schema 与样例不等于已实现导入器。`scorers.offline / select`、`stats.compare_to` 已有配置字段，但离线评分执行、评分版本选择和配对比较尚未实现。
+- 当前租约协议以 episode 为单位，重复上报采用先到结果保留。尚无独立 attempt 身份、租约代次隔离、持久化待提交队列或每次重派的完整成本账本；一次逻辑结果不代表物理执行仅发生一次。
+- 当前成功率分母只含 `done` 且可判定 success / failure 的样本，unknown 与 infra_error 另列；Wilson 区间不说明缺失偏差。完成度辅助指标、缺失敏感性界、故障比例阈值判无效、配对检验与回归门禁待实现。置信水平默认 0.95，现有 `ci95` 字段和 CLI 表头尚未随自定义置信水平改名。
+- `taskset_hash` 已记录到 manifest，但尚未校验 Worker 加载内容与该摘要一致。制品 URI 已有字段，统一制品存储、证据索引、HTML 报告、自动失败归因及多控制器部署仍是目标能力。
 
-Detroit 的目标不是提出新的 benchmark，而是把业界零散的最佳实践**工程化、统一化**：可扩展的调度、统计严谨的结论、完整的可复现性、自动化的失败归因。
+Mock 结果由 episode key 确定，用于验证调度与存储契约，不代表模型或机器人能力。仓库提供测试代码；本文不声明本轮测试通过或已完成真实模型 / 仿真实验。
 
-## 核心特性
+## 快速开始
 
-| 能力 | 说明 |
-|---|---|
-| 统一抽象 | `Task / Env / Subject / Episode / Scorer / Aggregator / Analyzer`，两个垂类共用 |
-| 被测对象服务化 | Subject 以独立服务运行（gRPC / WebSocket），依赖与评测环境隔离；N 个被测对象 + M 个环境只需 N+M 个适配器 |
-| 分布式调度 | Go 实现的控制面；episode 级切分、租约 + 心跳、幂等、断点续跑、失败重试 |
-| 统计严谨 | Wilson 置信区间、配对检验（McNemar）、样本量规划、回归门禁 |
-| 失败归因 | 规则/谓词 → LLM/VLM Judge → 人工复核的三层打分栈；失败聚类与影响排序 |
-| 可复现 | 运行清单（manifest）锁定镜像 digest、模型版本、seed、配置哈希；自带 sanity check |
-| 两个垂类 | `verticals/agent`：沙箱化工具调用 Agent 评测、垂直领域自定义评测集；`verticals/embodied`：基于 LIBERO / LeRobot 的仿真策略评测与鲁棒性扰动 |
+使用 [go.mod](go.mod) 声明的 **Go 1.26.0** 工具链。下面的 Makefile 命令需要兼容 POSIX 的 Shell 与 `make`；Mock 闭环不需要 Docker、GPU 或模型密钥。
 
-## 仓库结构
+在第一个终端构建并启动控制面：
 
 标 ✅ 的目录已有代码，其余按 [路线图](docs/08-roadmap.md) 逐步落地。
 
@@ -72,7 +69,7 @@ Detroit/
 └── docs/
 ```
 
-## 文档
+该命令执行 `go build -o bin/ ./cmd/...`，数据库使用 `.detroit/detroit.db`；默认 gRPC 地址为 `127.0.0.1:7070`，HTTP API 为 `http://127.0.0.1:7071`。也可自行执行 `go build`，再用 `controller -db <path> -grpc <address> -http <address>` 启动；直接运行 controller 的默认数据库路径是 `detroit.db`。
 
 | 文档 | 内容 |
 |---|---|
@@ -93,18 +90,16 @@ Detroit/
 需要 Go 1.26+。支持导入 v2 评测集并调用 OpenAI 兼容模型，运行 `next_message` 单步评测、确定性评分与结果查看，见[模型接入指南](docs/11-model-evaluation.md)。多步沙箱任务尚未接入。以下 mock 流程用于验证调度，不产生真实模型成绩。
 
 ```bash
-# 1. 启动控制面（单机模式，SQLite 存在 .detroit/ 下；gRPC :7070，HTTP :7071）
-make up
-
-# 2. 另开终端，启动一个 mock Worker
 ./bin/detroit worker mock --slots 8
+```
 
-# 3. 提交评测；重复提交同一个 RunSpec 等于续跑
+在第三个终端提交示例并查看结果：
+
+```bash
 ./bin/detroit run submit -f examples/runspecs/mock-smoke.yaml
-
-# 4. 查看进度与带置信区间的成功率；取消
 ./bin/detroit run list
 ./bin/detroit run status <run-id>
+./bin/detroit run status <run-id> --json
 ./bin/detroit run cancel <run-id>
 ```
 
@@ -163,10 +158,48 @@ scorers:
 
 开发：`make test`（含 kill -9 端到端测试）、`make test-short`、`make lint`、`make proto`（重新生成 gRPC 代码，需要 protoc）。
 
-## 项目状态
+## 仓库结构
 
-M1 进行中，各项交付的完成情况见 [路线图](docs/08-roadmap.md)。所有对外宣称的数字都以 `results/` 下带运行清单的实测结果为准，未实测的数字一律不写。
+```text
+Detroit/
+├── cmd/
+│   ├── controller/          # gRPC 调度服务 + HTTP API
+│   └── detroit/             # CLI 与 Mock Worker 入口
+├── internal/
+│   ├── core/                # 核心类型、配置与幂等键
+│   ├── scheduler/           # 计划展开与租约服务
+│   ├── store/               # SQLite 状态与汇总查询
+│   ├── stats/               # Wilson 区间
+│   ├── taskset/             # Loader 注册表与 Synthetic
+│   ├── workerkit/           # Worker 运行时与 Mock
+│   ├── api/                 # HTTP API
+│   └── version/             # 构建版本信息
+├── proto/                   # Worker 与 Subject 协议
+├── gen/                     # protobuf / gRPC 生成代码
+├── workers/agent/sandbox/   # 独立 Docker 沙箱组件
+├── schemas/                 # 评测集 v2 JSON Schema
+├── examples/                # Mock RunSpec 与数据集样例
+├── test/e2e/                # 真实进程的重启测试
+├── docs/                    # 架构、协议、方法论与路线图
+├── DESIGN.md                # 跨模块优化目标
+├── CONTEXT.md               # 范围与决策
+├── GLOSSARY.md              # 术语
+├── Makefile
+└── go.mod
+```
 
-## License
+## 文档导航
 
-Apache-2.0
+| 文档 | 内容 |
+|---|---|
+| [DESIGN.md](DESIGN.md) | 基于当前 Go 内核的优化目标与跨模块约束 |
+| [CONTEXT.md](CONTEXT.md)、[术语表](GLOSSARY.md) | 范围决策与核心概念 |
+| [01 定位与目标](docs/01-overview.md) | Agent + 具身双垂类定位 |
+| [02 系统架构](docs/02-architecture.md) | 当前组件、持久化边界与调度演进 |
+| [03 核心抽象](docs/03-core-abstractions.md) | 统一类型与领域接口 |
+| [04 协议](docs/04-protocol.md) | 当前 v1 与目标租约、提交协议 |
+| [05 Agent 垂类](docs/05-vertical-agent.md)、[06 具身垂类](docs/06-vertical-embodied.md) | 环境、适配器与垂类执行设计 |
+| [07 评测方法论](docs/07-methodology.md) | 条件成功率、比较有效性与不确定性 |
+| [08 路线图](docs/08-roadmap.md)、[09 设计决策](docs/09-decisions.md) | 交付阶段、验收与取舍 |
+| [10 评测集格式协议](docs/10-dataset-format.md) | 题目、评分、评测集与导入契约 |
+| [项目介绍](docs/PROJECT-PROFILE.md) | 面向最终目标形态的专业项目介绍与简历文案 |
