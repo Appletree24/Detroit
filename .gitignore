@@ -5,3 +5,9 @@
 *.db-wal
 .env
 .env.*
+
+# Local dependencies, build output, and tool data
+/node_modules/
+/dist/
+/.tools/
+/.omp-extract/

@@ -23,8 +23,19 @@ func EpisodeKey(ep Episode, subjectDigest, envDigest string) string {
 
 // TaskEntry 是 TaskSet Loader 产出的一项：任务和它的全部固定初始状态。
 type TaskEntry struct {
-	Task       Task        `json:"task"`
-	InitStates []InitState `json:"init_states"`
+	Evaluation *EvaluationInput `json:"evaluation,omitempty"`
+	Task       Task             `json:"task"`
+	InitStates []InitState      `json:"init_states"`
+}
+
+// EvaluationInput belongs to the Worker/scoring side, never Subject input.
+type EvaluationInput struct {
+	DatasetDigest string            `json:"dataset_digest"`
+	TaskDigest    string            `json:"task_digest"`
+	Weight        float64           `json:"weight"`
+	GroupKey      string            `json:"group_key,omitempty"`
+	Purpose       string            `json:"purpose"`
+	Scorings      []json.RawMessage `json:"scorings"`
 }
 
 // TaskSetLoader 从 benchmark 或用户数据加载任务（docs/03 §3 扩展点）。

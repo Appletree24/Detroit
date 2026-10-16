@@ -39,6 +39,7 @@ func (c *Config) defaults() {
 }
 
 type worker struct {
+	adapter  string
 	vertical string
 	slots    int
 }
@@ -72,8 +73,12 @@ func (s *Service) Register(_ context.Context, req *workerv1.RegisterReq) (*worke
 	if req.GetSlots() <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "slots must be positive")
 	}
+	adapter := req.GetLabels()["subject_adapter"]
+	if adapter == "" {
+		adapter = "mock"
+	} // Legacy Workers only executed mock runs.
 	s.mu.Lock()
-	s.workers[req.GetWorkerId()] = worker{vertical: req.GetVertical(), slots: int(req.GetSlots())}
+	s.workers[req.GetWorkerId()] = worker{vertical: req.GetVertical(), slots: int(req.GetSlots()), adapter: adapter}
 	s.mu.Unlock()
 	slog.Info("worker registered", "worker", req.GetWorkerId(), "vertical", req.GetVertical(), "slots", req.GetSlots(), "labels", req.GetLabels())
 	return &workerv1.RegisterResp{LeaseTtlMs: s.cfg.LeaseTTL.Milliseconds()}, nil
@@ -85,7 +90,7 @@ func (s *Service) Lease(ctx context.Context, req *workerv1.LeaseReq) (*workerv1.
 		return nil, err
 	}
 	max := min(int(req.GetMax()), w.slots)
-	leases, err := s.store.Lease(ctx, req.GetWorkerId(), w.vertical, max, s.cfg.Now(), s.cfg.LeaseTTL)
+	leases, err := s.store.LeaseForAdapter(ctx, req.GetWorkerId(), w.vertical, w.adapter, max, s.cfg.Now(), s.cfg.LeaseTTL)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "lease: %v", err)
 	}

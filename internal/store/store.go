@@ -124,6 +124,12 @@ type Lease struct {
 
 // Lease 为 Worker 分配最多 max 个待调度 episode，只从该垂类、未取消的 run 中挑选，按 run 提交顺序。
 func (s *Store) Lease(ctx context.Context, workerID, vertical string, max int, now time.Time, ttl time.Duration) ([]Lease, error) {
+	return s.LeaseForAdapter(ctx, workerID, vertical, "", max, now, ttl)
+}
+
+// LeaseForAdapter prevents mock Workers from consuming real-model runs.
+// Empty adapter preserves the unfiltered storage API for existing callers.
+func (s *Store) LeaseForAdapter(ctx context.Context, workerID, vertical, adapter string, max int, now time.Time, ttl time.Duration) ([]Lease, error) {
 	if max <= 0 {
 		return nil, nil
 	}
@@ -134,8 +140,9 @@ func (s *Store) Lease(ctx context.Context, workerID, vertical string, max int, n
 			SELECT e.episode_key, e.run_id, e.task_id, e.variant_id, e.init_state_id, e.seed, e.repeat_idx, r.spec_json
 			FROM episodes e JOIN runs r ON r.run_id = e.run_id
 			WHERE e.status = ? AND r.status IN (?, ?) AND r.vertical = ?
+ AND (? = '' OR json_extract(r.spec_json, '$.subject.adapter') = ?)
 			ORDER BY r.created_at, r.run_id, e.rowid
-			LIMIT ?`, EpisodePending, RunPending, RunRunning, vertical, max)
+			LIMIT ?`, EpisodePending, RunPending, RunRunning, vertical, adapter, adapter, max)
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Appletree24/Detroit/internal/agentio"
 	"github.com/Appletree24/Detroit/internal/core"
 	"github.com/Appletree24/Detroit/internal/taskset"
 )
@@ -21,9 +22,14 @@ type PlanResult struct {
 // Plan 把 RunSpec 展开为 episode 列表：tasks × variants × init_states × seeds × repeats。
 // 顺序确定，同一个 RunSpec 总是得到同样的列表和同样的 episode key。
 func Plan(ctx context.Context, spec *core.RunSpec) (*PlanResult, error) {
-	entries, err := taskset.Load(ctx, spec.TaskSet)
+	entries, err := taskset.LoadRun(ctx, spec)
 	if err != nil {
 		return nil, err
+	}
+	if spec.Subject.Adapter == "openai-compatible" {
+		if err := agentio.ValidateRun(spec, entries); err != nil {
+			return nil, err
+		}
 	}
 	b, err := json.Marshal(entries)
 	if err != nil {

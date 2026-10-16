@@ -32,6 +32,7 @@ message ReportAck    { bool accepted = 1; bool duplicate = 2; }
 - Worker 在租约过期后仍可能完成并上报（"僵尸完成"）。控制面接受第一个到达的结果；后到者标记 duplicate。
 - `Heartbeat` 响应中的 `cancelled` 用于用户取消 run 时让 Worker 尽快停止。被取消的 episode 不上报结果；它们的租约过期后回到待调度状态，run 重新开放后继续执行。
 - 心跳只为该 Worker 仍持有的租约续期；已过期并转给别的 Worker 的租约不会被续期。
+- 注册 labels 的 `subject_adapter` 指定可执行的 Subject 适配器；未指定时按 `mock` 处理。控制面同时按垂类和适配器派发，避免 mock 执行真实模型任务。
 - `Lease`、`Heartbeat` 要求 Worker 已注册，否则返回 `FailedPrecondition`；`Report` 不要求，以便接受僵尸完成和控制面重启前执行完的结果。
 - `episode_json` 是 `Episode`（03 §2），`run_spec_json` 是补全默认值后的 RunSpec。`result_json` 是 `EpisodeResult`，其中 `key` 必须与 `episode_key` 一致。
 
@@ -74,7 +75,17 @@ message ActBatchResp { repeated ActResp items = 1; }
 - 具身：观测含多路图像，使用 gRPC + msgpack 载荷；对已经提供 WebSocket 推理服务的策略框架（如 openpi），适配器做一层协议转换，不修改上游代码。
 - Agent：被测对象常常就是一个 OpenAI 兼容的 Chat Completions 接口 + 一段 harness 逻辑。`openai-compatible` 适配器把 Act 映射为一次 chat 调用，工具调用以 JSON 形式返回。
 
-### 2.4 超时与重试
+### 2.4 当前 Agent 载荷
+
+`subjects/openaicompat` 实现无状态 Subject 服务。`Describe.name` 为配置的 API 模型名称，
+`digest` 为声明的模型版本，`obs_schema=detroit.agent.observation/v1`，
+`action_schema=openai.chat.completion/v1`，`action_horizon=1`。
+观测是 msgpack 对象：`{messages, tools?, params?, seed}`；Worker 维护完整对话。
+`Act.actions` 返回原始非流式 Chat Completions 响应 JSON（含一份 choice、usage 等）；
+Worker 取其中的 assistant 消息评分。`debug` 返回配置的 model、base_url 和供应商 request_id。
+API Key 只存在于 Subject 服务中，不进入观测或响应。
+
+### 2.5 超时与重试
 - `Act` 默认超时：Agent 120s、具身 5s（可配）。
 - 超时由 Worker 判定：可重试一次；再次超时则 episode 记为 `infra_error: subject_timeout`。
 - **不重试模型层面的错误输出**（例如格式错误的工具调用）——那是模型能力的一部分，应计为失败并归因为 `malformed_action`。

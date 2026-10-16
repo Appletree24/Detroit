@@ -48,18 +48,20 @@ Detroit/
 ├── internal/
 │   ├── core/               # ✅ 核心类型、RunSpec 解析、episode 幂等键
 │   ├── scheduler/          # ✅ 切分、租约、重试、续跑
-│   ├── store/              # ✅ 元数据（SQLite）；制品存储待做
+│   ├── store/              # ✅ 元数据（SQLite）、结果与制品路径查询
 │   ├── stats/              # ✅ Wilson 区间；配对检验、样本量待做
-│   ├── taskset/            # ✅ TaskSet Loader 注册表（内置 synthetic）
+│   ├── taskset/            # ✅ TaskSet Loader 注册表（synthetic、detroit-v2）
+│   ├── dataset/            # ✅ v2 导入校验、冻结快照与评分绑定
+│   ├── scoring/            # ✅ 单步输出的确定性评分
 │   ├── workerkit/          # ✅ Go Worker 运行时（注册、拉取、心跳、上报）+ mock Executor
 │   ├── api/                # ✅ API Server
 │   ├── analyze/            # 失败归因、聚类
 │   └── report/             # 报告生成（Markdown / HTML）
 ├── proto/                  # ✅ Subject 协议、Worker 协议（protobuf）；生成代码在 gen/
 ├── workers/
-│   ├── agent/              # 沙箱环境 worker；✅ sandbox/：Docker 沙箱（L1，可切 gVisor）
+│   ├── agent/              # ✅ next_message 真实 Worker；sandbox/：独立 Docker 沙箱
 │   └── embodied/           # Python：MuJoCo / LIBERO 环境 worker
-├── subjects/               # 被测对象适配器（LLM API、openpi、LeRobot 策略…）
+├── subjects/               # ✅ openaicompat：OpenAI 兼容 API 的 Subject gRPC 服务
 ├── verticals/
 │   ├── agent/              # Agent 任务集、评分器、自定义评测集构建器
 │   └── embodied/           # 具身任务集、扰动套件、子目标谓词
@@ -84,10 +86,11 @@ Detroit/
 | [08 路线图](docs/08-roadmap.md) | 里程碑、验收标准、砍需求顺序 |
 | [09 设计决策记录](docs/09-decisions.md) | 关键取舍及理由 |
 | [10 评测集格式协议](docs/10-dataset-format.md) | 题目、评分、评测集三种文档，打包与导入检查（草案） |
+| [11 模型接入](docs/11-model-evaluation.md) | 模型配置、真实 Worker、单步评分、制品与当前边界 |
 
 ## 快速开始
 
-需要 Go 1.25+。当前只有内核骨架：任务来自内置的 `synthetic` 来源，由 mock Worker 执行，不调用模型、不启动沙箱。
+需要 Go 1.26+。支持导入 v2 评测集并调用 OpenAI 兼容模型，运行 `next_message` 单步评测、确定性评分与结果查看，见[模型接入指南](docs/11-model-evaluation.md)。多步沙箱任务尚未接入。以下 mock 流程用于验证调度，不产生真实模型成绩。
 
 ```bash
 # 1. 启动控制面（单机模式，SQLite 存在 .detroit/ 下；gRPC :7070，HTTP :7071）
@@ -104,6 +107,59 @@ make up
 ./bin/detroit run status <run-id>
 ./bin/detroit run cancel <run-id>
 ```
+
+### 导入 v2 评测集
+
+```bash
+./bin/detroit dataset import -f examples/datasets/v2/casepick-inline
+# 也支持 bundle 目录、单个 case.json / cases.jsonl / scoring.json。
+# 单独导入评分时，用 --base <已有快照路径> 提供题目。
+```
+
+导入结果的 `path` 和 `snapshot` 填入 RunSpec（模板见
+[dataset-smoke.yaml](examples/runspecs/dataset-smoke.yaml)）：
+
+```yaml
+taskset:
+  vertical: agent
+  source: detroit-v2
+  options:
+    path: /absolute/path/from/import/result
+    snapshot: sha256:<snapshot 摘要>
+scorers:
+  select: all # 或评分 label，如 lenient
+```
+
+导入校验 Schema、摘要、blob、对话工具配对、引文及评分引用，并将完整文档和材料复制到
+`.detroit/datasets/` 下的固定快照。导入不执行模型、setup 或评分命令。
+修改原始文件不影响已有快照；快照被修改或材料损坏时，提交和 Worker 加载会失败。
+题目、评分与诊断原文保存在快照中，Loader 只把 `task` 放入被测输入。
+
+验证集出现改进来源或与已导入改进集共享同源题组时，导入返回冲突并以非零退出码结束；
+可先修正用途，也可在确认后重新导入并指定 `--confirm-validation-conflicts`。
+
+当前为本地共享文件系统模式：CLI、控制面和 Worker 必须能访问同一绝对快照路径。
+`scorers.select` 决定评分定义。真实 Worker 当前要求每题最多选择一份评分，多份时需指定 label；分别出报告仍待实现。
+
+### 运行真实模型
+
+在模型适配服务的终端配置 `OPENAI_API_KEY`，然后启动服务与 Worker（分别运行）：
+
+```bash
+./bin/detroit subject openai-compatible --model YOUR_MODEL_ID --digest YOUR_MODEL_REVISION
+./bin/detroit worker agent --slots 1
+```
+
+使用 [model-next-message.yaml](examples/runspecs/model-next-message.yaml)，填入模型版本和已导入的快照。
+`subject.endpoint` 指向 Subject gRPC 地址；更换供应商 API 时，在适配服务上设置 `--base-url`。
+
+```bash
+./bin/detroit run submit -f my-run.yaml
+./bin/detroit run status RUN_ID
+./bin/detroit run results RUN_ID
+```
+
+完整操作、参数和评分支持范围见[模型接入指南](docs/11-model-evaluation.md)。
 
 开发：`make test`（含 kill -9 端到端测试）、`make test-short`、`make lint`、`make proto`（重新生成 gRPC 代码，需要 protoc）。
 

@@ -52,6 +52,10 @@ func Load(ctx context.Context, spec core.TaskSetSpec) ([]core.TaskEntry, error) 
 	if err != nil {
 		return nil, fmt.Errorf("taskset %s: %w", spec.Source, err)
 	}
+	return validateEntries(spec, entries)
+}
+
+func validateEntries(spec core.TaskSetSpec, entries []core.TaskEntry) ([]core.TaskEntry, error) {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		if e.Task.ID == "" {

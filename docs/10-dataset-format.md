@@ -45,7 +45,7 @@ detroit.dataset/v2 ──固定──▶ detroit.case/v2（id + revision + task 
                        （一道题可以有多份评分）
 ```
 
-最简单的用法只需要题目文档：评分内联在 `case.scoring` 里，不写评测集文档也能导入（平台按导入批次生成一个评测集）。
+最简单的用法只需要题目文档：评分可以内联在 `case.scoring` 里，不写评测集文档也能导入（平台按导入批次生成一个评测集）。尚未提供评分时，评测集条目的 `scoring` 为空数组；它表示待补评分，不能据此判定成功。
 
 ## 4. 编码与摘要
 
@@ -304,6 +304,8 @@ Judge 用哪个模型、什么提示词，不属于本协议，由 RunSpec 中�
 
 - `scoring` 列出这道题在本评测集里使用的评分。只有一份时直接使用；有多份时，RunSpec 必须指定用哪一份，或者全部评一遍、分别报告。不同评分的结果不混在一起统计（07 §3.4）。
 - 内联评分用 `{ "digest": case.digests.scoring }` 引用，不需要 `id`。
+- 尚无评分的题目可以导入，条目的 `scoring: []` 表示待补评分。
+- 导入时若拒绝某份评分，平台移除该评分的引用并生成新的有效评测集摘要，在导入结果中明确报告；原始交换文件保持不变。
 - 同一个 `group_key` 的题目，在统计上作为相关样本处理，不当作互相独立的题。
 
 ## 9. 打包
@@ -413,3 +415,19 @@ CasePick 的内部记录和导出都直接使用本格式，私有信息放在 `
 2. **`next_message` 题在 Worker 里怎么跑。** 由轻量的对话 Worker 执行，不启动沙箱，工具调用只记录不执行。见 02 §3.5。
 3. **工具定义近似的题目能不能和其他题混在一起比较。** 不阻止混用；报告按 `task.tools.source` 和 `task.system.status` 分组展示。见 07 §6 第 7 项。
 4. **一道题挂多份评分时 RunSpec 怎么写。** `scorers.select: all` 或某个评分的 `label`；默认 `all`，不同评分的结果分别报告。见 03 §4。
+
+## 14. 当前导入实现
+
+`detroit dataset import -f <path> [--store DIR] [--base SNAPSHOT]` 支持 JSON、JSONL 和目录 bundle。
+`--base` 为单独分发的评分提供已导入的题目与评分；未提供评测集文档时按合并后的内容生成评测集。
+JSON 重复键、非法 Unicode、结构未知字段和摘要不符均拒绝；未知检查类型按 §10 警告保留。
+本实现尚不接受 YAML；可先无损转换为 JSON。
+
+导入返回 `dataset_digest`（协议版本）与 `snapshot`（本地完整快照摘要），后者同时固定来源、诊断、
+扩展字段和用途冲突确认状态。RunSpec 使用 `source: detroit-v2`，在 `options.path` 和
+`options.snapshot` 中固定快照；CLI、控制面和 Worker 共享该路径。
+题目以 `digests.task` 作为唯一固定初始状态 ID。评分、权重和同源题组保留在评估侧，不进入 `Task.Input`。
+
+验证集冲突会保存一个可检查的快照，但运行需要显式确认；确认后重新导入并加
+`--confirm-validation-conflicts`。后续导入同源改进数据时，尚未显式确认的验证快照也会在加载时阻止运行。
+当前已有 `next_message` 真实模型 Worker 与部分确定性评分，见 [11 模型接入](11-model-evaluation.md)。导入成功仍不代表环境可运行；多步任务和多份评分分别统计尚未接入。

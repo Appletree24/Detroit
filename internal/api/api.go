@@ -16,6 +16,7 @@ import (
 
 	"github.com/Appletree24/Detroit/internal/core"
 	"github.com/Appletree24/Detroit/internal/scheduler"
+	"github.com/Appletree24/Detroit/internal/scoring"
 	"github.com/Appletree24/Detroit/internal/store"
 	"github.com/Appletree24/Detroit/internal/version"
 )
@@ -24,13 +25,14 @@ const maxSpecBytes = 1 << 20
 
 // Manifest 锁定一次 run 的配置（docs/07 §5.1）。硬件信息由 Worker 侧采集，尚未写入。
 type Manifest struct {
-	DetroitVersion string          `json:"detroit_version"`
-	Subject        core.SubjectRef `json:"subject"`
-	Env            ManifestEnv     `json:"env"`
-	TaskSetHash    string          `json:"taskset_hash"`
-	Seeds          []int64         `json:"seeds"`
-	Scorers        []string        `json:"scorers"`
-	SpecHash       string          `json:"spec_hash"`
+	DeterministicScorer string          `json:"deterministic_scorer,omitempty"`
+	DetroitVersion      string          `json:"detroit_version"`
+	Subject             core.SubjectRef `json:"subject"`
+	Env                 ManifestEnv     `json:"env"`
+	TaskSetHash         string          `json:"taskset_hash"`
+	Seeds               []int64         `json:"seeds"`
+	Scorers             []string        `json:"scorers"`
+	SpecHash            string          `json:"spec_hash"`
 }
 
 type ManifestEnv struct {
@@ -56,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/runs", s.submit)
 	mux.HandleFunc("GET /v1/runs", s.list)
 	mux.HandleFunc("GET /v1/runs/{id}", s.get)
+	mux.HandleFunc("GET /v1/runs/{id}/results", s.results)
 	mux.HandleFunc("POST /v1/runs/{id}/cancel", s.cancel)
 	return mux
 }
@@ -88,6 +91,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		Seeds:          spec.TaskSet.Seeds,
 		Scorers:        spec.Scorers.Offline,
 		SpecHash:       spec.Hash(),
+	}
+	if spec.Subject.Adapter == "openai-compatible" {
+		manifest.DeterministicScorer = scoring.Version
 	}
 	res, err := s.store.Submit(r.Context(), spec, body, manifest, plan.Episodes, s.now())
 	if err != nil {
@@ -146,4 +152,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
+}
+
+func (s *Server) results(w http.ResponseWriter, r *http.Request) {
+	records, err := s.store.Results(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusOf(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
 }

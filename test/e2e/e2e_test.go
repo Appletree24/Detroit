@@ -194,3 +194,48 @@ taskset:
 		t.Fatalf("results: got %d want %d (%v)", n, total, err)
 	}
 }
+
+func TestDatasetImportAndRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds binaries and runs real processes")
+	}
+	dir := t.TempDir()
+	controllerBin, cliBin := build(t, dir)
+	output := cli(t, cliBin, "unused", "dataset", "import", "-f", "../../examples/datasets/v2/casepick-inline", "--store", filepath.Join(dir, "datasets"))
+	var imported struct {
+		Path     string `json:"path"`
+		Snapshot string `json:"snapshot"`
+	}
+	if err := json.Unmarshal([]byte(output), &imported); err != nil {
+		t.Fatal(err)
+	}
+	grpcAddr, httpAddr := freePort(t), freePort(t)
+	_ = spawn(t, controllerBin, "-db", filepath.Join(dir, "detroit.db"), "-grpc", grpcAddr, "-http", httpAddr)
+	waitFor(t, 10*time.Second, "controller", func() bool {
+		conn, err := net.Dial("tcp", httpAddr)
+		if err == nil {
+			conn.Close()
+		}
+		return err == nil
+	})
+	// JSON is accepted as a RunSpec. The snapshot path/digest come from the real CLI.
+	spec := map[string]any{"name": "dataset-e2e", "subject": map[string]any{"adapter": "mock", "digest": "mock@1"}, "taskset": map[string]any{"vertical": "agent", "source": "detroit-v2", "repeats": 3, "seeds": []int{0, 1}, "options": map[string]any{"path": imported.Path, "snapshot": imported.Snapshot}}, "scorers": map[string]any{"select": "lenient"}}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "spec.json")
+	if err = os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output = cli(t, cliBin, httpAddr, "run", "submit", "-f", path)
+	runID := strings.TrimSuffix(strings.Fields(strings.TrimPrefix(output, "submitted "))[0], ":")
+	_ = spawn(t, cliBin, "worker", "mock", "--controller", grpcAddr, "--slots", "2", "--success-rate", "1")
+	waitFor(t, 15*time.Second, "imported dataset completion", func() bool {
+		s, ok := summary(t, cliBin, httpAddr, runID)
+		return ok && s.Status == store.RunDone && s.Overall.N == 6 && s.Overall.Successes == 6
+	})
+	if output = cli(t, cliBin, httpAddr, "run", "submit", "-f", path); !strings.HasPrefix(output, "resumed "+runID) {
+		t.Fatalf("expected resume, got %s", output)
+	}
+}

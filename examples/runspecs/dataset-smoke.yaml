@@ -1,0 +1,20 @@
+# Replace path/snapshot with the values printed by:
+# detroit dataset import -f examples/datasets/v2/casepick-inline
+name: dataset-smoke
+subject:
+  adapter: mock
+  digest: mock@1
+  params: {success_rate: 0.7}
+taskset:
+  vertical: agent
+  source: detroit-v2
+  variants: [base]
+  seeds: [0, 1]
+  repeats: 2
+  options:
+    path: /replace/with/import/path
+    snapshot: sha256:replace-with-import-snapshot
+scorers:
+  select: all
+stats:
+  confidence: 0.95

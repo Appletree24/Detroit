@@ -1,0 +1,25 @@
+# Start Subject first (API key exists only in that process's environment):
+# detroit subject openai-compatible --model YOUR_MODEL_ID --digest YOUR_MODEL_REVISION
+# detroit worker agent --slots 1
+# Import cases, then replace options.path and options.snapshot below:
+# detroit dataset import -f examples/datasets/v2/casepick-inline
+name: first-model-eval
+subject:
+  adapter: openai-compatible
+  endpoint: 127.0.0.1:7080 # Subject gRPC, not the provider's HTTP URL
+  digest: YOUR_MODEL_REVISION
+  # Only specify parameters supported by your provider/model.
+  params: {}
+taskset:
+  vertical: agent
+  source: detroit-v2
+  variants: [base]
+  seeds: [0]
+  repeats: 1
+  options:
+    path: /replace/with/import/path
+    snapshot: sha256:replace-with-import-snapshot
+scorers:
+  select: default # The CasePick example has both default and lenient.
+stats:
+  confidence: 0.95

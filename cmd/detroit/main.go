@@ -25,6 +25,10 @@ import (
 )
 
 const usage = `usage:
+  detroit subject openai-compatible --model MODEL --digest VERSION [--base-url URL] [--api-key-env ENV] [--listen ADDR]
+  detroit worker agent [--controller ADDR] [--slots N] [--artifacts DIR] [--subject-timeout D]
+  detroit run results <run-id> [--api URL] [--json]
+  detroit dataset import -f <path> [--store DIR] [--base SNAPSHOT] [--confirm-validation-conflicts]
   detroit run submit -f <runspec.yaml> [--api URL]
   detroit run list [--api URL]
   detroit run status <run-id> [--api URL] [--json]
@@ -45,6 +49,14 @@ func run(args []string) error {
 		return fmt.Errorf("missing command")
 	}
 	switch args[0] + " " + args[1] {
+	case "subject openai-compatible":
+		return subjectOpenAI(args[2:])
+	case "worker agent":
+		return workerAgent(args[2:])
+	case "run results":
+		return runResults(args[2:])
+	case "dataset import":
+		return datasetImport(args[2:])
 	case "run submit":
 		return runSubmit(args[2:])
 	case "run list":
@@ -220,7 +232,7 @@ func workerMock(args []string) error {
 	defer stop()
 	fmt.Fprintf(os.Stderr, "mock worker %s → %s (vertical=%s slots=%d)\n", *id, *addr, *vertical, *slots)
 	return workerkit.Run(ctx, workerv1.NewSchedulerClient(conn), workerkit.Config{
-		WorkerID: *id, Vertical: *vertical, Slots: *slots, Labels: map[string]string{"executor": "mock"},
+		WorkerID: *id, Vertical: *vertical, Slots: *slots, Labels: map[string]string{"executor": "mock", "subject_adapter": "mock"},
 	}, m)
 }
 

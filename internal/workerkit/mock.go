@@ -28,6 +28,9 @@ type Mock struct {
 }
 
 func (m *Mock) Execute(ctx context.Context, job Job) (core.EpisodeResult, error) {
+	if job.Spec.Subject.Adapter != "mock" {
+		return core.EpisodeResult{}, &InfraError{Kind: "unsupported_subject", Err: fmt.Errorf("mock Worker only executes subject.adapter mock")}
+	}
 	m.once.Do(func() { m.rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())) })
 	task, err := findTask(ctx, job)
 	if err != nil {
@@ -67,7 +70,7 @@ func (m *Mock) Execute(ctx context.Context, job Job) (core.EpisodeResult, error)
 
 // findTask 用与控制面相同的 Loader 取回任务内容。真实 Worker 会缓存加载结果。
 func findTask(ctx context.Context, job Job) (core.Task, error) {
-	entries, err := taskset.Load(ctx, job.Spec.TaskSet)
+	entries, err := taskset.LoadRun(ctx, &job.Spec)
 	if err != nil {
 		return core.Task{}, err
 	}

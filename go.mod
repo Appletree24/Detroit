@@ -3,6 +3,8 @@ module github.com/Appletree24/Detroit
 go 1.26.0
 
 require (
+	github.com/google/jsonschema-go v0.4.2
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -15,6 +17,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

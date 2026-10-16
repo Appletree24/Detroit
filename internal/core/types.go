@@ -7,6 +7,8 @@ import (
 
 // Task 是一个可判定成败的目标，由垂类定义。
 type Task struct {
+	// Input is the complete v2 task object; evaluator-only fields stay in TaskEntry.
+	Input       json.RawMessage   `json:"input,omitempty"`
 	ID          string            `json:"id"`    // "libero_spatial/0003" 或 "refund-policy/017"
 	Suite       string            `json:"suite"` // 用于分组聚合
 	Instruction string            `json:"instruction"`
